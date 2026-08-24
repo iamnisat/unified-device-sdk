@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';

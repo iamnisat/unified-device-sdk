@@ -49,7 +49,7 @@ class FakeTransport implements DeviceTransport {
   @override
   int get negotiatedMtu => _negotiatedMtu;
 
-  int _negotiatedMtu = 0;
+  final int _negotiatedMtu = 0;
 
   @override
   Future<void> startScan() async {

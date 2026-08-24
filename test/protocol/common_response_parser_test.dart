@@ -6,7 +6,7 @@ void main() {
     late CommonResponseParser parser;
 
     setUp(() {
-      parser = CommonResponseParser();
+      parser = const CommonResponseParser();
     });
 
     test('parses device info', () {
