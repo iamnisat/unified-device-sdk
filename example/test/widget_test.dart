@@ -35,7 +35,7 @@ class _FakePlatform extends UnifiedDevicePlatform {
   Stream<Map<String, dynamic>> get scanResults => _scanController.stream;
 
   @override
-  Future<void> connect(String deviceId) async {}
+  Future<void> connect(String deviceId, {BleGattProfile? bleProfile}) async {}
 
   @override
   Future<void> disconnect() async {}
@@ -60,7 +60,7 @@ class _FakePlatform extends UnifiedDevicePlatform {
   Future<bool> requestBluetoothPermissions() async => true;
 
   @override
-  Future<void> startScan() async {}
+  Future<void> startScan({BleGattProfile? bleProfile}) async {}
 
   @override
   Future<void> stopScan() async {}

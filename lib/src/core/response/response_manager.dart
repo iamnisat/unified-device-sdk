@@ -705,116 +705,125 @@ class UcpResponseManager {
   }
 
   String _className(int commandClass) {
-    switch (commandClass) {
-      case CommandClasses.system:
-        return 'SYSTEM';
-      case CommandClasses.session:
-        return 'SESSION';
-      case CommandClasses.measurement:
-        return 'MEASUREMENT';
-      case CommandClasses.report:
-        return 'REPORT';
-      case CommandClasses.moisture:
-        return 'MOISTURE';
-      case CommandClasses.ui:
-        return 'UI';
-      case CommandClasses.connectivity:
-        return 'CONNECTIVITY';
-      case CommandClasses.calibration:
-        return 'CALIBRATION';
-      case CommandClasses.configuration:
-        return 'CONFIGURATION';
-      case CommandClasses.fileTransfer:
-        return 'FILE_TRANSFER';
-      default:
-        return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    if (commandClass == CommandClasses.system) {
+      return 'SYSTEM';
     }
+    if (commandClass == CommandClasses.deviceInfo) {
+      return 'DEVICE_INFO';
+    }
+    if (commandClass == CommandClasses.configuration) {
+      return 'CONFIG';
+    }
+    if (commandClass == CommandClasses.measurement) {
+      return 'MEASUREMENT';
+    }
+    if (commandClass == CommandClasses.calibration) {
+      return 'CALIBRATION';
+    }
+    if (commandClass == CommandClasses.dataLog) {
+      return 'DATA_LOG';
+    }
+    if (commandClass == CommandClasses.firmwareUpdate) {
+      return 'FIRMWARE_UPDATE';
+    }
+    if (commandClass == CommandClasses.diagnostic) {
+      return 'DIAGNOSTIC';
+    }
+    if (commandClass == CommandClasses.session) {
+      return 'SESSION';
+    }
+    if (commandClass == CommandClasses.power) {
+      return 'POWER';
+    }
+    return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
   }
 
   String _commandName(int commandClass, int commandId) {
-    switch (commandClass) {
-      case CommandClasses.system:
-        switch (commandId) {
-          case 0x01:
-            return 'time';
-          case 0x02:
-            return 'device_info';
-        }
-      case CommandClasses.session:
-        switch (commandId) {
-          case 0x01:
-            return 'session_open_rtc_sync';
-          case 0x02:
-            return 'session_close';
-          case 0x03:
-            return 'heartbeat';
-          case 0x04:
-            return 'bt_transport_open';
-        }
-      case CommandClasses.measurement:
-        switch (commandId) {
-          case 0x01:
-            return 'start_test';
-          case 0x02:
-            return 'stop_test';
-          case 0x03:
-            return 'man_test_permit';
-        }
-      case CommandClasses.report:
-        switch (commandId) {
-          case 0x01:
-            return 'last_report';
-          case 0x02:
-            return 'report_get';
-          case 0x03:
-            return 'report_delete';
-          case 0x04:
-            return 'report_export';
-        }
-      case CommandClasses.moisture:
-        switch (commandId) {
-          case 0x01:
-            return 'moist_get_on';
-          case 0x02:
-            return 'moist_get_off';
-        }
-      case CommandClasses.ui:
-        if (commandId == 0x01) {
-          return 'font';
-        }
-      case CommandClasses.connectivity:
-        if (commandId == 0x01) {
-          return 'cdn';
-        }
-      case CommandClasses.calibration:
-        switch (commandId) {
-          case 0x01:
-            return 'calibration_start';
-          case 0x02:
-            return 'calibration_status';
-          case 0x03:
-            return 'calibration_apply';
-        }
-      case CommandClasses.configuration:
-        switch (commandId) {
-          case 0x01:
-            return 'config_read';
-          case 0x02:
-            return 'config_write';
-          case 0x03:
-            return 'config_list';
-        }
-      case CommandClasses.fileTransfer:
-        switch (commandId) {
-          case 0x01:
-            return 'file_transfer_start';
-          case 0x02:
-            return 'file_transfer_chunk';
-          case 0x03:
-            return 'file_transfer_end';
-          case 0x04:
-            return 'file_transfer_status';
-        }
+    if (commandClass == CommandClasses.system) {
+      if (commandId == 0x01) {
+        return 'rtc_sync';
+      }
+    }
+    if (commandClass == CommandClasses.deviceInfo) {
+      if (commandId == 0x01) {
+        return 'get_device_info';
+      }
+      if (commandId == 0x02) {
+        return 'set_client_name';
+      }
+    }
+    if (commandClass == CommandClasses.session) {
+      if (commandId == 0x01) {
+        return 'open_rtc_sync';
+      }
+      if (commandId == 0x02) {
+        return 'status_get';
+      }
+      if (commandId == 0x03) {
+        return 'event';
+      }
+      if (commandId == 0x04) {
+        return 'safe_disconnect_request';
+      }
+      if (commandId == 0x05) {
+        return 'safe_disconnect_commit';
+      }
+      if (commandId == 0x06) {
+        return 'heartbeat';
+      }
+    }
+    if (commandClass == CommandClasses.measurement) {
+      if (commandId == 0x01) {
+        return 'start_soil_test';
+      }
+      if (commandId == 0x02) {
+        return 'stop_soil_test';
+      }
+      if (commandId == 0x03) {
+        return 'start_moisture_test';
+      }
+      if (commandId == 0x04) {
+        return 'stop_moisture_test';
+      }
+      if (commandId == 0x05) {
+        return 'get_last_report';
+      }
+    }
+    if (commandClass == CommandClasses.configuration) {
+      if (commandId == 0x01) {
+        return 'get_all_config';
+      }
+      if (commandId == 0x03) {
+        return 'set_config_value';
+      }
+      if (commandId == 0x05) {
+        return 'set_manual_test_permission';
+      }
+      if (commandId == 0x07) {
+        return 'set_ui_language';
+      }
+      if (commandId == 0x08) {
+        return 'get_config_value';
+      }
+    }
+    if (commandClass == CommandClasses.calibration) {
+      if (commandId == 0x01) {
+        return 'set_calibration_value';
+      }
+      if (commandId == 0x02) {
+        return 'get_calibration_value';
+      }
+      if (commandId == 0x03) {
+        return 'get_all_calibration_values';
+      }
+    }
+    if (commandClass == CommandClasses.dataLog) {
+      if (commandId == 0x07) {
+        return 'read_file_chunk';
+      }
+      if (commandId == 0x09) {
+        return 'cancel_file_read';
+      }
     }
     return '0x${commandId.toRadixString(16).toUpperCase().padLeft(2, '0')}';
   }

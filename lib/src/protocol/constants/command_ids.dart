@@ -1,50 +1,79 @@
 class SystemCommandIds {
   SystemCommandIds._();
 
-  static const int time = 0x01;
-  static const int deviceInfo = 0x02;
+  static const int rtcSync = 0x01;
+  static const int reboot = 0x02;
+  static const int idleReboot = 0x03;
+  static const int setAunkurId = 0x04;
+
+  static const int time = rtcSync;
+  static const int deviceInfo = DeviceInfoCommandIds.getDeviceInfo;
+}
+
+class DeviceInfoCommandIds {
+  DeviceInfoCommandIds._();
+
+  static const int getDeviceInfo = 0x01;
+  static const int setClientName = 0x02;
+  static const int getClientNameLog = 0x03;
+
+  static const int deviceInfo = getDeviceInfo;
 }
 
 class SessionCommandIds {
   SessionCommandIds._();
 
   static const int sessionOpenRtcSync = 0x01;
-  static const int sessionClose = 0x02;
-  static const int heartbeat = 0x03;
+  static const int statusGet = 0x02;
+  static const int event = 0x03;
+  static const int safeDisconnectRequest = 0x04;
+  static const int safeDisconnectCommit = 0x05;
+  static const int heartbeat = 0x06;
+  static const int abort = 0x07;
+  static const int getLog = 0x08;
+  static const int clearLog = 0x09;
+
+  static const int sessionClose = safeDisconnectRequest;
   static const int btTransportOpen = 0x04;
 }
 
 class MeasurementCommandIds {
   MeasurementCommandIds._();
 
-  static const int startTest = 0x01;
-  static const int stopTest = 0x02;
-  static const int manTestPermit = 0x03;
+  static const int startSoilTest = 0x01;
+  static const int stopSoilTest = 0x02;
+  static const int startMoistureTest = 0x03;
+  static const int stopMoistureTest = 0x04;
+  static const int getLastReport = 0x05;
+
+  static const int startTest = startSoilTest;
+  static const int stopTest = stopSoilTest;
+  static const int manTestPermit = 0x05;
 }
 
 class ReportCommandIds {
   ReportCommandIds._();
 
-  static const int lastReport = 0x01;
+  static const int lastReport = MeasurementCommandIds.getLastReport;
 }
 
 class MoistureCommandIds {
   MoistureCommandIds._();
 
-  static const int moistGetOn = 0x01;
-  static const int moistGetOff = 0x02;
+  static const int moistGetOn = MeasurementCommandIds.startMoistureTest;
+  static const int moistGetOff = MeasurementCommandIds.stopMoistureTest;
 }
 
 class UiCommandIds {
   UiCommandIds._();
 
-  static const int font = 0x01;
+  static const int font = 0x07;
 }
 
 class ConnectivityCommandIds {
   ConnectivityCommandIds._();
 
-  static const int cdn = 0x01;
+  static const int cdn = DeviceInfoCommandIds.setClientName;
 }
 
 class CalibrationCommandIds {
@@ -64,13 +93,19 @@ class ConfigurationCommandIds {
   ConfigurationCommandIds._();
 
   /// Read a configuration parameter.
-  static const int configRead = 0x01;
+  static const int configRead = 0x08;
 
   /// Write a configuration parameter.
-  static const int configWrite = 0x02;
+  static const int configWrite = 0x03;
 
   /// List all available configuration parameters.
-  static const int configList = 0x03;
+  static const int configList = 0x01;
+
+  static const int restoreDefault = 0x02;
+  static const int setMinSampleSizePercent = 0x04;
+  static const int setManualTestPermission = 0x05;
+  static const int setSoilSensorAddress = 0x06;
+  static const int setUiLanguage = 0x07;
 }
 
 class ReportHistoryCommandIds {
@@ -109,7 +144,7 @@ class CommandIds {
   CommandIds._();
 
   static const int systemTime = SystemCommandIds.time;
-  static const int systemDeviceInfo = SystemCommandIds.deviceInfo;
+  static const int systemDeviceInfo = DeviceInfoCommandIds.getDeviceInfo;
   static const int sessionOpenRtcSync = SessionCommandIds.sessionOpenRtcSync;
   static const int sessionClose = SessionCommandIds.sessionClose;
   static const int sessionHeartbeat = SessionCommandIds.heartbeat;
@@ -136,5 +171,6 @@ class CommandIds {
   static const int fileTransferStart = FileTransferCommandIds.fileTransferStart;
   static const int fileTransferChunk = FileTransferCommandIds.fileTransferChunk;
   static const int fileTransferEnd = FileTransferCommandIds.fileTransferEnd;
-  static const int fileTransferStatus = FileTransferCommandIds.fileTransferStatus;
+  static const int fileTransferStatus =
+      FileTransferCommandIds.fileTransferStatus;
 }

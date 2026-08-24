@@ -4,7 +4,6 @@ import '../../core/client/unified_device_client.dart';
 import '../constants/common_command_ids.dart';
 import '../constants/command_classes.dart';
 import '../constants/operation_codes.dart';
-import '../constants/product_ids.dart';
 import '../constants/tlv_types.dart';
 import '../models/battery_info.dart';
 import '../models/device_info.dart';
@@ -22,10 +21,14 @@ class CommonCommands {
   Future<PingResult> ping() async {
     final stopwatch = Stopwatch()..start();
     await _client.sendCommand(
-      productId: 0,
-      op: OperationCodes.action,
+      productId: _client.hardwareProfile.productId,
+      profileId: _client.hardwareProfile.profileId,
+      sourceAddress: _client.hardwareProfile.sourceAddress,
+      destinationAddress: _client.hardwareProfile.destinationAddress,
+      op: OperationCodes.heartbeat,
       commandClass: CommandClasses.session,
       commandId: CommonCommandIds.ping,
+      payload: _sessionIdPayload(),
     );
     stopwatch.stop();
     return PingResult(stopwatch.elapsedMilliseconds);
@@ -36,10 +39,10 @@ class CommonCommands {
     final response = await _client.deviceInfo();
     return DeviceInfoResult(
       DeviceInfo(
-        productId: ProductIds.aunkurUcp1,
+        productId: _client.hardwareProfile.productId,
         hardwareVersion: 0,
         serialNumber: response.aunkurId ?? '',
-        manufacturerName: 'ELAB',
+        manufacturerName: '',
         modelName: response.deviceName ?? '',
       ),
     );
@@ -73,7 +76,10 @@ class CommonCommands {
   /// Sets the device time using a shared common payload contract.
   Future<GenericCommandResult> setTime(DateTime time) async {
     final response = await _client.sendCommand(
-      productId: ProductIds.aunkurUcp1,
+      productId: _client.hardwareProfile.productId,
+      profileId: _client.hardwareProfile.profileId,
+      sourceAddress: _client.hardwareProfile.sourceAddress,
+      destinationAddress: _client.hardwareProfile.destinationAddress,
       op: OperationCodes.write,
       commandClass: CommandClasses.system,
       commandId: CommonCommandIds.setTime,
@@ -97,7 +103,10 @@ class CommonCommands {
     Duration? timeout,
   }) async {
     final response = await _client.sendCommand(
-      productId: ProductIds.aunkurUcp1,
+      productId: _client.hardwareProfile.productId,
+      profileId: _client.hardwareProfile.profileId,
+      sourceAddress: _client.hardwareProfile.sourceAddress,
+      destinationAddress: _client.hardwareProfile.destinationAddress,
       op: OperationCodes.action,
       commandClass: CommandClasses.system,
       commandId: commandId,
@@ -108,5 +117,13 @@ class CommonCommands {
       response.payload,
       statusCode: response.statusCode,
     );
+  }
+
+  List<int> _sessionIdPayload() {
+    final sessionId = _client.currentSession?.ucpSessionId;
+    if (sessionId == null) {
+      return const <int>[];
+    }
+    return TlvBuilder().addUint32BE(TlvTypes.sessionId, sessionId).build();
   }
 }

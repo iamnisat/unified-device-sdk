@@ -56,11 +56,11 @@ class BleManager(
         private const val TAG = "UnifiedDeviceSdkBle"
         private const val CONNECT_RETRY_DELAY_MS = 500L
         private const val CONNECT_CLEANUP_DELAY_MS = 300L
-        private val SERVICE_UUID: UUID =
+        private val DEFAULT_SERVICE_UUID: UUID =
             UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
-        private val NOTIFY_CHARACTERISTIC_UUID: UUID =
+        private val DEFAULT_NOTIFY_CHARACTERISTIC_UUID: UUID =
             UUID.fromString("0000FFE1-0000-1000-8000-00805F9B34FB")
-        private val WRITE_CHARACTERISTIC_UUID: UUID =
+        private val DEFAULT_WRITE_CHARACTERISTIC_UUID: UUID =
             UUID.fromString("0000FFE2-0000-1000-8000-00805F9B34FB")
         private val CCCD_UUID: UUID =
             UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
@@ -80,6 +80,9 @@ class BleManager(
     private var notifyCharacteristic: BluetoothGattCharacteristic? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var connectedDeviceId: String? = null
+    private var serviceUuid: UUID = DEFAULT_SERVICE_UUID
+    private var notifyCharacteristicUuid: UUID = DEFAULT_NOTIFY_CHARACTERISTIC_UUID
+    private var writeCharacteristicUuid: UUID = DEFAULT_WRITE_CHARACTERISTIC_UUID
 
     private var pendingConnectResult: MethodChannel.Result? = null
     private var pendingDisconnectResult: MethodChannel.Result? = null
@@ -136,7 +139,10 @@ class BleManager(
 
     fun isBluetoothEnabled(): Boolean = bluetoothAdapter()?.isEnabled == true
 
-    fun startScan(result: MethodChannel.Result) {
+    fun startScan(arguments: Map<String, Any?>?, result: MethodChannel.Result) {
+        if (!applyGattProfile(arguments, result)) {
+            return
+        }
         if (!ensureBluetoothAvailable(result) || !ensurePermissions(result) || !ensureBluetoothEnabled(result)) {
             return
         }
@@ -156,7 +162,7 @@ class BleManager(
 
         val filters = listOf(
             ScanFilter.Builder()
-                .setServiceUuid(ParcelUuid(SERVICE_UUID))
+                .setServiceUuid(ParcelUuid(serviceUuid))
                 .build()
         )
         val settings = ScanSettings.Builder()
@@ -166,7 +172,7 @@ class BleManager(
         try {
             scanner.startScan(filters, settings, scanCallback)
             isScanning = true
-            Log.d(TAG, "Started BLE scan for service=$SERVICE_UUID")
+            Log.d(TAG, "Started BLE scan for service=$serviceUuid")
             result.success(null)
         } catch (securityException: SecurityException) {
             Log.e(TAG, "Bluetooth scan permission denied", securityException)
@@ -193,7 +199,10 @@ class BleManager(
     }
 
     @SuppressLint("MissingPermission")
-    fun connect(deviceId: String, result: MethodChannel.Result) {
+    fun connect(deviceId: String, arguments: Map<String, Any?>?, result: MethodChannel.Result) {
+        if (!applyGattProfile(arguments, result)) {
+            return
+        }
         if (!ensureBluetoothAvailable(result) || !ensurePermissions(result) || !ensureBluetoothEnabled(result)) {
             return
         }
@@ -604,6 +613,41 @@ class BleManager(
 
     private fun bluetoothAdapter(): BluetoothAdapter? = bluetoothManager.adapter
 
+    private fun applyGattProfile(arguments: Map<String, Any?>?, result: MethodChannel.Result): Boolean {
+        try {
+            serviceUuid = parseUuid(arguments?.get("serviceUuid"), DEFAULT_SERVICE_UUID)
+            notifyCharacteristicUuid = parseUuid(
+                arguments?.get("notifyCharacteristicUuid"),
+                DEFAULT_NOTIFY_CHARACTERISTIC_UUID
+            )
+            writeCharacteristicUuid = parseUuid(
+                arguments?.get("writeCharacteristicUuid"),
+                DEFAULT_WRITE_CHARACTERISTIC_UUID
+            )
+            return true
+        } catch (exception: IllegalArgumentException) {
+            result.error("invalid_argument", exception.message, null)
+            return false
+        }
+    }
+
+    private fun parseUuid(value: Any?, fallback: UUID): UUID {
+        val text = (value as? String)?.trim().orEmpty()
+        if (text.isEmpty()) {
+            return fallback
+        }
+        val expanded = if (Regex("^[0-9a-fA-F]{4}$").matches(text)) {
+            "0000${text.uppercase()}-0000-1000-8000-00805F9B34FB"
+        } else {
+            text
+        }
+        return try {
+            UUID.fromString(expanded)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid BLE UUID: $text")
+        }
+    }
+
     private fun emitScanResult(scanResult: ScanResult) {
         val record = scanResult.scanRecord
         val serviceUuids = record?.serviceUuids?.map { it.uuid.toString() } ?: emptyList()
@@ -807,28 +851,28 @@ class BleManager(
             return
         }
 
-        val service: BluetoothGattService? = gatt.getService(SERVICE_UUID)
+        val service: BluetoothGattService? = gatt.getService(serviceUuid)
         if (service == null) {
             handleConnectionFailure(
                 "service_not_found",
-                "Required service FFE0 not found",
-                mapOf("deviceId" to connectedDeviceId, "serviceUuid" to SERVICE_UUID.toString())
+                "Required service $serviceUuid not found",
+                mapOf("deviceId" to connectedDeviceId, "serviceUuid" to serviceUuid.toString())
             )
             cleanupGatt("service_not_found")
             emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
             return
         }
 
-        val notify = service.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID)
-        val write = service.getCharacteristic(WRITE_CHARACTERISTIC_UUID)
+        val notify = service.getCharacteristic(notifyCharacteristicUuid)
+        val write = service.getCharacteristic(writeCharacteristicUuid)
         if (notify == null || write == null) {
             handleConnectionFailure(
                 "characteristic_not_found",
-                "Required FFE1/FFE2 characteristics were not found",
+                "Required notify/write characteristics were not found",
                 mapOf(
                     "deviceId" to connectedDeviceId,
-                    "notifyCharacteristicUuid" to NOTIFY_CHARACTERISTIC_UUID.toString(),
-                    "writeCharacteristicUuid" to WRITE_CHARACTERISTIC_UUID.toString()
+                    "notifyCharacteristicUuid" to notifyCharacteristicUuid.toString(),
+                    "writeCharacteristicUuid" to writeCharacteristicUuid.toString()
                 )
             )
             cleanupGatt("characteristic_not_found")
@@ -840,8 +884,8 @@ class BleManager(
         if (!notificationsEnabled) {
             handleConnectionFailure(
                 "notification_enable_failed",
-                "Failed to enable notifications on FFE1",
-                mapOf("deviceId" to connectedDeviceId, "characteristicUuid" to NOTIFY_CHARACTERISTIC_UUID.toString())
+                "Failed to enable notifications on $notifyCharacteristicUuid",
+                mapOf("deviceId" to connectedDeviceId, "characteristicUuid" to notifyCharacteristicUuid.toString())
             )
             cleanupGatt("notification_enable_failed")
             emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
@@ -852,7 +896,7 @@ class BleManager(
         if (cccd == null) {
             handleConnectionFailure(
                 "characteristic_not_found",
-                "CCCD descriptor not found for FFE1",
+                "CCCD descriptor not found for $notifyCharacteristicUuid",
                 mapOf("deviceId" to connectedDeviceId, "descriptorUuid" to CCCD_UUID.toString())
             )
             cleanupGatt("cccd_not_found")
@@ -1180,7 +1224,7 @@ class BleManager(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
-            if (characteristic.uuid == NOTIFY_CHARACTERISTIC_UUID) {
+            if (characteristic.uuid == notifyCharacteristicUuid) {
                 @Suppress("DEPRECATION")
                 characteristic.value?.let(::emitNotificationData)
             }
@@ -1191,7 +1235,7 @@ class BleManager(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            if (characteristic.uuid == NOTIFY_CHARACTERISTIC_UUID) {
+            if (characteristic.uuid == notifyCharacteristicUuid) {
                 emitNotificationData(value)
             }
         }

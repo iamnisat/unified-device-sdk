@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'connection_state.dart';
 import 'device_transport.dart';
 import 'discovered_device.dart';
+import '../client/unified_device_hardware_profile.dart';
 import '../../platform/platform_event_mapper.dart';
 import '../../platform/unified_device_platform.dart';
 
@@ -15,6 +16,7 @@ import '../../platform/unified_device_platform.dart';
 /// connection state, and incoming notification bytes.
 class BleTransport implements DeviceTransport {
   final UnifiedDevicePlatform _platform;
+  final BleGattProfile _bleProfile;
 
   final StreamController<DiscoveredDevice> _discoveredDevicesController =
       StreamController<DiscoveredDevice>.broadcast();
@@ -36,8 +38,9 @@ class BleTransport implements DeviceTransport {
   bool _isDisposed = false;
 
   /// Creates a BLE transport using the configured platform implementation.
-  BleTransport({UnifiedDevicePlatform? platform})
-    : _platform = platform ?? UnifiedDevicePlatform.instance {
+  BleTransport({UnifiedDevicePlatform? platform, BleGattProfile? bleProfile})
+    : _platform = platform ?? UnifiedDevicePlatform.instance,
+      _bleProfile = bleProfile ?? const BleGattProfile() {
     _bindPlatformStreams();
   }
 
@@ -184,7 +187,7 @@ class BleTransport implements DeviceTransport {
   @override
   Future<void> startScan() async {
     _throwIfDisposed();
-    await _platform.startScan();
+    await _platform.startScan(bleProfile: _bleProfile);
     _isScanning = true;
     _connectionStateController.add(DeviceConnectionState.scanning);
   }
@@ -206,7 +209,7 @@ class BleTransport implements DeviceTransport {
       _isScanning = false;
     }
     _connectedDeviceName = device.name;
-    await _platform.connect(device.deviceId);
+    await _platform.connect(device.deviceId, bleProfile: _bleProfile);
   }
 
   @override

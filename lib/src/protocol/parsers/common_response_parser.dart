@@ -39,11 +39,18 @@ class CommonResponseParser {
     final decoded = _decodedFromResponse(response, fallbackToRaw: true);
     final lookup = _index(decoded);
     return UcpNackDetails(
-      status: _intValue(lookup[TlvTypes.statusU8]),
+      status:
+          _intValue(lookup[TlvTypes.statusCode]) ??
+          _intValue(lookup[TlvTypes.statusU8]),
       errorCode:
           _intValue(lookup[TlvTypes.errorCodeU16]) ??
-          (response.payload.isNotEmpty ? response.payload.first : response.flags),
-      text: _stringValue(lookup[TlvTypes.textUtf8]),
+          _intValue(lookup[TlvTypes.statusCode]) ??
+          (response.payload.isNotEmpty
+              ? response.payload.first
+              : response.flags),
+      text:
+          _stringValue(lookup[TlvTypes.messageText]) ??
+          _stringValue(lookup[TlvTypes.textUtf8]),
       tlvs: decoded,
     );
   }

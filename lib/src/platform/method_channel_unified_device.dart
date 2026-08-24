@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../core/client/unified_device_hardware_profile.dart';
 import 'unified_device_platform.dart';
 
 const _bleChannel = MethodChannel('unified_device_sdk/ble');
@@ -114,8 +115,8 @@ class MethodChannelUnifiedDevice extends UnifiedDevicePlatform {
 
   /// Starts scanning for BLE devices.
   @override
-  Future<void> startScan() async {
-    await _bleChannel.invokeMethod('startScan');
+  Future<void> startScan({BleGattProfile? bleProfile}) async {
+    await _bleChannel.invokeMethod('startScan', bleProfile?.toJson());
   }
 
   /// Stops scanning for BLE devices.
@@ -126,8 +127,11 @@ class MethodChannelUnifiedDevice extends UnifiedDevicePlatform {
 
   /// Connects to a BLE device by its identifier.
   @override
-  Future<void> connect(String deviceId) async {
-    await _bleChannel.invokeMethod('connect', {'deviceId': deviceId});
+  Future<void> connect(String deviceId, {BleGattProfile? bleProfile}) async {
+    await _bleChannel.invokeMethod('connect', {
+      'deviceId': deviceId,
+      if (bleProfile != null) ...bleProfile.toJson(),
+    });
   }
 
   /// Disconnects from the currently connected device.

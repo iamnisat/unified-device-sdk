@@ -1,6 +1,7 @@
 import '../transport/device_transport.dart';
 import '../../logging/ucp_log_mode.dart';
 import '../../protocol/constants/protocol_constants.dart';
+import 'unified_device_hardware_profile.dart';
 
 /// Configuration for the [UnifiedDeviceClient].
 class UnifiedDeviceClientConfig {
@@ -31,6 +32,9 @@ class UnifiedDeviceClientConfig {
   /// Controls how much communication detail the SDK emits.
   final UcpLogMode logMode;
 
+  /// Hardware-specific BLE and UCP values.
+  final UnifiedDeviceHardwareProfile hardwareProfile;
+
   /// Creates a [UnifiedDeviceClientConfig] with the given parameters.
   const UnifiedDeviceClientConfig({
     required this.transport,
@@ -42,5 +46,6 @@ class UnifiedDeviceClientConfig {
     this.eofDelimiter = ProtocolConstants.eof,
     this.protocolVersion = ProtocolConstants.currentProtocolVersion,
     this.logMode = UcpLogMode.off,
+    this.hardwareProfile = UnifiedDeviceHardwareProfile.aunkurUcp1,
   });
 }

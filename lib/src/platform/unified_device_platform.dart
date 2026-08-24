@@ -1,4 +1,5 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import '../core/client/unified_device_hardware_profile.dart';
 import 'method_channel_unified_device.dart';
 
 /// Platform interface for the Unified Device SDK.
@@ -89,7 +90,7 @@ abstract class UnifiedDevicePlatform extends PlatformInterface {
   // ---- BLE Operations ----
 
   /// Starts scanning for BLE devices.
-  Future<void> startScan() {
+  Future<void> startScan({BleGattProfile? bleProfile}) {
     throw UnimplementedError('startScan() has not been implemented.');
   }
 
@@ -99,7 +100,7 @@ abstract class UnifiedDevicePlatform extends PlatformInterface {
   }
 
   /// Connects to a BLE device by its platform identifier.
-  Future<void> connect(String deviceId) {
+  Future<void> connect(String deviceId, {BleGattProfile? bleProfile}) {
     throw UnimplementedError('connect() has not been implemented.');
   }
 

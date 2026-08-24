@@ -39,6 +39,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
   UcpMoistureSample? _latestMoistureSample;
   UcpLastReport? _lastReport;
   String _progressMessage = 'Waiting for an active UCP session.';
+  int? _soilTestProgressPercent;
   String? _errorMessage;
   final List<String> _activityLines = <String>[];
   Future<void> Function()? _retryAction;
@@ -154,6 +155,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
           _stage = SoilTestFlowStage.soilTestRunning;
           _errorMessage = null;
           _lastReport = null;
+          _soilTestProgressPercent = 0;
           _progressMessage =
               'start_test ACK accepted. Waiting for device progress events...';
         });
@@ -180,6 +182,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       setState(() {
         _lastReport = report;
         _stage = SoilTestFlowStage.resultReady;
+        _soilTestProgressPercent = 100;
         _progressMessage = 'Result ready.';
         _retryAction = null;
       });
@@ -265,31 +268,59 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     }
 
     final decoded = _client.responseManager.decodeTlvs(frame);
-    final status = _findInt(decoded, TlvTypes.statusU8);
-    final text = _findString(decoded, TlvTypes.textUtf8);
-    final progress = text?.trim().isNotEmpty == true
-        ? text!.trim()
-        : status == null
-        ? 'Soil test event received.'
-        : 'Soil test progress update ($status).';
+    final status =
+        _findInt(decoded, TlvTypes.statusCode) ??
+        _findInt(decoded, TlvTypes.statusU8);
+    final text =
+        _findString(decoded, TlvTypes.messageText) ??
+        _findString(decoded, TlvTypes.textUtf8);
+    final firmwareState = _findInt(decoded, TlvTypes.fwStateU8);
+    final progressPercent =
+        _findInt(decoded, TlvTypes.sampleSizePercent) ??
+        _progressPercentFromText(text);
+    final message = text?.trim();
+    final progress = _soilTestProgressMessage(
+      progressPercent: progressPercent,
+      message: message,
+      status: status,
+    );
+    final hasError =
+        (status != null && status != 0) ||
+        _isSoilTestErrorMessage(message) ||
+        firmwareState == 6;
 
     if (!mounted) {
       return;
     }
+    if (hasError) {
+      setState(() {
+        if (progressPercent != null) {
+          _soilTestProgressPercent = progressPercent.clamp(0, 100).toInt();
+        }
+      });
+      _setError(
+        'Device reported soil test error${message == null || message.isEmpty ? '' : ': $message'}.',
+        retryAction: _startSoilTest,
+      );
+      return;
+    }
+
     setState(() {
       if (_stage != SoilTestFlowStage.fetchingReport) {
         _stage = SoilTestFlowStage.soilTestRunning;
+      }
+      if (progressPercent != null) {
+        _soilTestProgressPercent = progressPercent.clamp(0, 100).toInt();
       }
       _progressMessage = progress;
       _errorMessage = null;
     });
     _addActivity('EVENT: $progress');
 
-    final normalized = text?.toLowerCase();
     final complete =
         status == 4 ||
-        (normalized != null &&
-            normalized.contains('report ready for last_report'));
+        firmwareState == 5 ||
+        _isSoilTestCompleteMessage(message);
     if (complete) {
       unawaited(_fetchLastReport());
     }
@@ -332,6 +363,55 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     return null;
   }
 
+  int? _progressPercentFromText(String? text) {
+    if (text == null) {
+      return null;
+    }
+    final match = RegExp(r'(\d{1,3})%').firstMatch(text);
+    if (match == null) {
+      return null;
+    }
+    return int.tryParse(match.group(1)!);
+  }
+
+  String _soilTestProgressMessage({
+    required int? progressPercent,
+    required String? message,
+    required int? status,
+  }) {
+    if (progressPercent != null) {
+      final percent = progressPercent.clamp(0, 100).toInt();
+      if (percent >= 100) {
+        return 'Soil test progress: 100%. Waiting for final device status...';
+      }
+      return 'Soil test progress: $percent%.';
+    }
+    if (message != null && message.isNotEmpty) {
+      return message;
+    }
+    if (status != null) {
+      return 'Soil test progress update ($status).';
+    }
+    return 'Soil test event received.';
+  }
+
+  bool _isSoilTestErrorMessage(String? message) {
+    final normalized = message?.toLowerCase();
+    return normalized != null && normalized.contains('error');
+  }
+
+  bool _isSoilTestCompleteMessage(String? message) {
+    final normalized = message?.toLowerCase();
+    if (normalized == null) {
+      return false;
+    }
+    return normalized.contains('report ready') ||
+        normalized.contains('soil_test_done') ||
+        normalized.contains('soil_test_completed') ||
+        normalized.contains('completed') ||
+        normalized.contains('complete');
+  }
+
   void _setError(String message, {Future<void> Function()? retryAction}) {
     if (!mounted) {
       return;
@@ -358,6 +438,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       _reportFetchInFlight = false;
       _lastReport = null;
       _latestMoistureSample = null;
+      _soilTestProgressPercent = null;
       _progressMessage = _client.isSessionActive
           ? 'Session active. Start a live moisture read first.'
           : 'Waiting for the device session to become active.';
@@ -626,6 +707,13 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       _ => false,
     };
   }
+
+  bool get _showSoilTestProgress =>
+      _soilTestProgressPercent != null &&
+      (_stage == SoilTestFlowStage.soilTestRunning ||
+          _stage == SoilTestFlowStage.fetchingReport ||
+          _stage == SoilTestFlowStage.resultReady ||
+          _stage == SoilTestFlowStage.error);
 
   @override
   Widget build(BuildContext context) {
@@ -1056,6 +1144,10 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
                 ),
               ],
             ),
+            if (_showSoilTestProgress) ...[
+              const SizedBox(height: 12),
+              _buildSoilTestProgressMeter(theme),
+            ],
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
@@ -1112,6 +1204,59 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSoilTestProgressMeter(ThemeData theme) {
+    final percent = (_soilTestProgressPercent ?? 0).clamp(0, 100).toInt();
+    final progressColor = _stage == SoilTestFlowStage.error
+        ? theme.colorScheme.error
+        : _stageColor(theme);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: progressColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: progressColor.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.science_outlined, size: 18, color: progressColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Soil test sample progress',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: progressColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '$percent%',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: progressColor,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: percent / 100,
+              minHeight: 8,
+              backgroundColor: progressColor.withValues(alpha: 0.16),
+              valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -13,6 +13,9 @@ final class BleManager: NSObject {
     private var notifyCharacteristic: CBCharacteristic?
     private var writeCharacteristic: CBCharacteristic?
     private var activeDeviceId: String?
+    private var serviceUUID = BleConstants.defaultServiceUUID
+    private var notifyCharacteristicUUID = BleConstants.defaultNotifyCharacteristicUUID
+    private var writeCharacteristicUUID = BleConstants.defaultWriteCharacteristicUUID
 
     private var pendingConnectResult: FlutterResult?
     private var pendingDisconnectResult: FlutterResult?
@@ -66,7 +69,10 @@ final class BleManager: NSObject {
         }
     }
 
-    func startScan(result: @escaping FlutterResult) {
+    func startScan(arguments: [String: Any]?, result: @escaping FlutterResult) {
+        guard applyGattProfile(arguments: arguments, result: result) else {
+            return
+        }
         guard !isDisposed else {
             result(
                 NativeErrorMapper.flutterError(
@@ -106,7 +112,7 @@ final class BleManager: NSObject {
 
             discoveredPeripherals.removeAll()
             centralManager.scanForPeripherals(
-                withServices: [BleConstants.serviceUUID],
+                withServices: [serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
             isScanning = true
@@ -122,7 +128,10 @@ final class BleManager: NSObject {
         result(nil)
     }
 
-    func connect(deviceId: String, result: @escaping FlutterResult) {
+    func connect(deviceId: String, arguments: [String: Any]?, result: @escaping FlutterResult) {
+        guard applyGattProfile(arguments: arguments, result: result) else {
+            return
+        }
         guard !isDisposed else {
             result(
                 NativeErrorMapper.flutterError(
@@ -338,6 +347,45 @@ final class BleManager: NSObject {
         return NativeErrorMapper.bluetoothStateError(for: centralManager.state)
     }
 
+    private func applyGattProfile(arguments: [String: Any]?, result: @escaping FlutterResult) -> Bool {
+        guard
+            let serviceUUID = parseUuid(
+                arguments?["serviceUuid"],
+                fallback: BleConstants.defaultServiceUUID
+            ),
+            let notifyCharacteristicUUID = parseUuid(
+                arguments?["notifyCharacteristicUuid"],
+                fallback: BleConstants.defaultNotifyCharacteristicUUID
+            ),
+            let writeCharacteristicUUID = parseUuid(
+                arguments?["writeCharacteristicUuid"],
+                fallback: BleConstants.defaultWriteCharacteristicUUID
+            )
+        else {
+            result(
+                NativeErrorMapper.flutterError(
+                    code: BleConstants.invalidArgumentError,
+                    message: "Invalid BLE UUID in hardware profile"
+                )
+            )
+            return false
+        }
+
+        self.serviceUUID = serviceUUID
+        self.notifyCharacteristicUUID = notifyCharacteristicUUID
+        self.writeCharacteristicUUID = writeCharacteristicUUID
+        return true
+    }
+
+    private func parseUuid(_ value: Any?, fallback: CBUUID) -> CBUUID? {
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else {
+            return fallback
+        }
+        return CBUUID(string: text)
+    }
+
     private func emitConnectionState(
         _ state: String,
         deviceId: String?,
@@ -480,7 +528,7 @@ extension BleManager: CBCentralManagerDelegate {
                 pendingStartScanResult = nil
                 discoveredPeripherals.removeAll()
                 centralManager.scanForPeripherals(
-                    withServices: [BleConstants.serviceUUID],
+                    withServices: [serviceUUID],
                     options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
                 )
                 isScanning = true
@@ -537,7 +585,7 @@ extension BleManager: CBCentralManagerDelegate {
         }
 
         peripheral.delegate = self
-        peripheral.discoverServices([BleConstants.serviceUUID])
+        peripheral.discoverServices([serviceUUID])
     }
 
     func centralManager(
@@ -583,17 +631,17 @@ extension BleManager: CBPeripheralDelegate {
             return
         }
 
-        guard let service = peripheral.services?.first(where: { $0.uuid == BleConstants.serviceUUID }) else {
+        guard let service = peripheral.services?.first(where: { $0.uuid == serviceUUID }) else {
             failPendingConnect(
                 code: BleConstants.serviceNotFoundError,
-                message: "Required service FFE0 not found"
+                message: "Required service \(serviceUUID.uuidString) not found"
             )
             centralManager.cancelPeripheralConnection(peripheral)
             return
         }
 
         peripheral.discoverCharacteristics(
-            [BleConstants.notifyCharacteristicUUID, BleConstants.writeCharacteristicUUID],
+            [notifyCharacteristicUUID, writeCharacteristicUUID],
             for: service
         )
     }
@@ -616,14 +664,14 @@ extension BleManager: CBPeripheralDelegate {
         guard let characteristics = service.characteristics else {
             failPendingConnect(
                 code: BleConstants.characteristicNotFoundError,
-                message: "Required FFE1/FFE2 characteristics were not found"
+                message: "Required notify/write characteristics were not found"
             )
             centralManager.cancelPeripheralConnection(peripheral)
             return
         }
 
-        notifyCharacteristic = characteristics.first(where: { $0.uuid == BleConstants.notifyCharacteristicUUID })
-        writeCharacteristic = characteristics.first(where: { $0.uuid == BleConstants.writeCharacteristicUUID })
+        notifyCharacteristic = characteristics.first(where: { $0.uuid == notifyCharacteristicUUID })
+        writeCharacteristic = characteristics.first(where: { $0.uuid == writeCharacteristicUUID })
 
         guard
             let notifyCharacteristic = notifyCharacteristic,
@@ -631,7 +679,7 @@ extension BleManager: CBPeripheralDelegate {
         else {
             failPendingConnect(
                 code: BleConstants.characteristicNotFoundError,
-                message: "Required FFE1/FFE2 characteristics were not found"
+                message: "Required notify/write characteristics were not found"
             )
             centralManager.cancelPeripheralConnection(peripheral)
             return
@@ -645,14 +693,14 @@ extension BleManager: CBPeripheralDelegate {
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard characteristic.uuid == BleConstants.notifyCharacteristicUUID else {
+        guard characteristic.uuid == notifyCharacteristicUUID else {
             return
         }
 
         if let error = error {
             failPendingConnect(
                 code: BleConstants.notificationEnableFailedError,
-                message: "Failed to enable notifications on FFE1",
+                message: "Failed to enable notifications on \(notifyCharacteristicUUID.uuidString)",
                 error: error
             )
             centralManager.cancelPeripheralConnection(peripheral)
@@ -662,7 +710,7 @@ extension BleManager: CBPeripheralDelegate {
         guard characteristic.isNotifying else {
             failPendingConnect(
                 code: BleConstants.notificationEnableFailedError,
-                message: "Failed to enable notifications on FFE1"
+                message: "Failed to enable notifications on \(notifyCharacteristicUUID.uuidString)"
             )
             centralManager.cancelPeripheralConnection(peripheral)
             return
@@ -676,7 +724,7 @@ extension BleManager: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard characteristic.uuid == BleConstants.notifyCharacteristicUUID else {
+        guard characteristic.uuid == notifyCharacteristicUUID else {
             return
         }
 
@@ -703,7 +751,7 @@ extension BleManager: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard characteristic.uuid == BleConstants.writeCharacteristicUUID else {
+        guard characteristic.uuid == writeCharacteristicUUID else {
             return
         }
 

@@ -6,6 +6,7 @@
 // Core exports - Client
 export 'src/core/client/unified_device_client.dart';
 export 'src/core/client/unified_device_client_config.dart';
+export 'src/core/client/unified_device_hardware_profile.dart';
 export 'src/core/client/ucp_session_manager.dart';
 export 'src/core/client/unified_device_session.dart';
 

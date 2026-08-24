@@ -6,6 +6,7 @@ import 'package:unified_device_sdk/unified_device_sdk.dart';
 
 import 'soil_test_connection_screen.dart';
 import 'soil_test_screen.dart';
+import '../hardware_profiles.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/device_scan_panel.dart';
 import '../widgets/command_panel.dart';
@@ -77,7 +78,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     _platform = widget.platform ?? UnifiedDevicePlatform.instance;
     _client = UnifiedDeviceClient(
       UnifiedDeviceClientConfig(
-        transport: BleTransport(platform: _platform),
+        transport: BleTransport(
+          platform: _platform,
+          bleProfile: appHardwareProfile.ble,
+        ),
+        hardwareProfile: appHardwareProfile,
         logMode: UcpLogMode.raw,
       ),
     );

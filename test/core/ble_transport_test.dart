@@ -17,6 +17,8 @@ class FakeUnifiedDevicePlatform extends UnifiedDevicePlatform {
   bool disconnectCalled = false;
   bool disposeCalled = false;
   String? connectDeviceId;
+  BleGattProfile? lastScanProfile;
+  BleGattProfile? lastConnectProfile;
   List<int>? lastWrite;
 
   @override
@@ -31,8 +33,9 @@ class FakeUnifiedDevicePlatform extends UnifiedDevicePlatform {
       _notificationDataController.stream;
 
   @override
-  Future<void> startScan() async {
+  Future<void> startScan({BleGattProfile? bleProfile}) async {
     startScanCalled = true;
+    lastScanProfile = bleProfile;
   }
 
   @override
@@ -41,8 +44,9 @@ class FakeUnifiedDevicePlatform extends UnifiedDevicePlatform {
   }
 
   @override
-  Future<void> connect(String deviceId) async {
+  Future<void> connect(String deviceId, {BleGattProfile? bleProfile}) async {
     connectDeviceId = deviceId;
+    lastConnectProfile = bleProfile;
   }
 
   @override
@@ -142,6 +146,27 @@ void main() {
       expect(platform.connectDeviceId, 'dev-1');
       expect(platform.lastWrite, [1, 2, 3]);
       expect(platform.disconnectCalled, isTrue);
+    });
+
+    test('passes configured GATT profile to scan and connect', () async {
+      final profilePlatform = FakeUnifiedDevicePlatform();
+      const bleProfile = BleGattProfile(
+        serviceUuid: '1234',
+        notifyCharacteristicUuid: '1235',
+        writeCharacteristicUuid: '1236',
+      );
+      final profileTransport = BleTransport(
+        platform: profilePlatform,
+        bleProfile: bleProfile,
+      );
+      addTearDown(profileTransport.dispose);
+
+      final device = DiscoveredDevice(deviceId: 'dev-1', rssi: -42);
+      await profileTransport.startScan();
+      await profileTransport.connect(device);
+
+      expect(profilePlatform.lastScanProfile, same(bleProfile));
+      expect(profilePlatform.lastConnectProfile, same(bleProfile));
     });
 
     test('maps scan result events to discovered device stream', () async {

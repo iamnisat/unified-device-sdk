@@ -168,6 +168,117 @@ await client.disconnect();
 await client.dispose();
 ```
 
+## Production Hardware vs Previous DUMMY Hardware 🔁
+
+The earlier DUMMY hardware guide and the current Porokh production hardware use the same BLE transport and the same UCP frame envelope, but the production firmware changed the command model, session bootstrap, required TLVs, and close/heartbeat behavior.
+
+### What Stayed the Same ✅
+
+| Area | Behavior |
+| --- | --- |
+| BLE service | `FFE0` |
+| Notify characteristic | `FFE1`, subscribe before the first UCP request |
+| Write characteristic | `FFE2` |
+| Frame format | `0xDD ... CRC16 ... 0x77` |
+| Byte order | Big-endian for UCP header fields and TLV lengths |
+| CRC | CRC16/CCITT-FALSE over `VER` through payload, excluding SOF/EOF |
+| App address | `0x01` |
+| Device address | `0x10` |
+| Product ID | `0x01` for Porokh/Aunkur soil product family |
+
+### Main Differences ⚠️
+
+| Area | Previous DUMMY Hardware | Current Production Hardware |
+| --- | --- | --- |
+| Profile ID | `0x01` | `0x02` |
+| Session class | `0x02` | `0x09` |
+| Transport open | App sent `bt_transport_open` after notify subscription | No `bt_transport_open` packet is sent |
+| First UCP request | `SESSION 0x02 / open_rtc_sync 0x01` after transport open | `SESSION 0x09 / open_rtc_sync 0x01` immediately after notify subscription |
+| Session open payload | `epoch_u64` and sometimes client text | Required: `epoch_u64`, `client_name`, `app_instance_id`; optional: `app_user_id` |
+| Heartbeat | `SESSION 0x02 / heartbeat 0x03`, often optional | `SESSION 0x09 / heartbeat 0x06`, OP `0x08`, includes `session_id` |
+| Safe close | `SESSION 0x02 / session_close 0x02` | `SESSION 0x09 / safe_disconnect_request 0x04`, includes `session_id` and `disconnect_reason` |
+| Device info | `SYSTEM 0x01 / device_info 0x02` | `DEVICE_INFO 0x02 / get_device_info 0x01` |
+| Measurement class | `0x03` | `0x04` |
+| Last report | `REPORT 0x04 / last_report 0x01` | `MEASUREMENT 0x04 / get_last_report 0x05` |
+| Moisture stream | `MOISTURE 0x05 / 0x01..0x02` | `MEASUREMENT 0x04 / start_moisture_test 0x03`, `stop_moisture_test 0x04` |
+| UI language | `UI 0x06 / font 0x01` | `CONFIG 0x03 / set_ui_language 0x07` |
+| Client name | `CONNECTIVITY 0x07 / cdn 0x01` | `DEVICE_INFO 0x02 / set_client_name 0x02` |
+
+### Production Bootstrap Flow 🚀
+
+Production hardware must follow this order:
+
+1. Scan for `Aunkur_` devices or BLE service `FFE0`.
+2. Connect to the selected BLE peripheral.
+3. Discover service `FFE0`.
+4. Subscribe to notify characteristic `FFE1`.
+5. Resolve write characteristic `FFE2`.
+6. Request MTU when supported.
+7. Send plain UCP `SESSION/open_rtc_sync` using class `0x09`, command `0x01`.
+8. Wait for ACK containing `session_id`.
+9. Treat the device as command-ready only after `sessionActive`.
+
+The production session-open request looks like this at field level:
+
+| Field | Value |
+| --- | --- |
+| `VER` | `0x01` |
+| `PRODUCT` | `0x01` |
+| `PROFILE` | `0x02` |
+| `SRC` | `0x01` |
+| `DST` | `0x10` |
+| `OP` | `0x01` |
+| `CLASS` | `0x09` |
+| `CMD` | `0x01` |
+| Required TLVs | `epoch_u64`, `client_name`, `app_instance_id` |
+
+The example app configures this automatically in `example/lib/hardware_profiles.dart`:
+
+```dart
+const appHardwareProfile = UnifiedDeviceHardwareProfile(
+  name: 'Porokh Production',
+  clientName: 'PorokhApp',
+  appInstanceId: 'app-001',
+  bootstrapStrategy: UcpBootstrapStrategy.rtcSyncOnly,
+);
+```
+
+### Why the Old Implementation Failed 🧯
+
+The real production device returned:
+
+```text
+unsupported UCP version/product/profile
+```
+
+because the app was still sending the DUMMY session packet:
+
+```text
+PROFILE 0x01, CLASS 0x02, CMD 0x01, payload only epoch_u64
+```
+
+Production firmware expects:
+
+```text
+PROFILE 0x02, CLASS 0x09, CMD 0x01, payload epoch_u64 + client_name + app_instance_id
+```
+
+### Migration Checklist ✅
+
+- Use `UnifiedDeviceHardwareProfile` for hardware-specific values.
+- Use `UcpBootstrapStrategy.rtcSyncOnly` for Porokh production devices.
+- Do not send `bt_transport_open` to production firmware.
+- Use `ProfileIds.defaultProfile`, which maps to production profile `0x02`.
+- Wait for `sessionActive` before sending normal commands.
+- Store and reuse the firmware `session_id` for heartbeat and safe disconnect.
+- Use production command classes and IDs from `CommandClasses`, `SessionCommandIds`, `MeasurementCommandIds`, and `DeviceInfoCommandIds`.
+- Include `global_land_location`, `aez`, and `soil_category` when starting a soil test. The SDK defaults them to `0`, but production apps should pass real values when available.
+- Decode NACK `status_code` and `message_text` for actionable hardware logs.
+
+### Security Note 🔐
+
+The production document says current firmware accepts plain UCP during the software integration period. The production target is encrypted operational traffic after the plain `SESSION/open_rtc_sync` bootstrap. That means `open_rtc_sync` stays plain because the AES minute key depends on synchronized RTC state, while future operational commands should move to the encrypted transport path when firmware policy requires it.
+
 ## Connection State 🔄
 
 Use `connectionState` to drive your UI:
@@ -241,6 +352,9 @@ await client.startTest(
   farmerId: 'FARMER-0012',
   fieldIndex: 'FIELD-A3',
   fieldTestIndex: 'TEST-0001',
+  globalLandLocation: 0, // Replace with the real land location ID.
+  aez: 0,
+  soilCategory: 0,
 );
 ```
 
@@ -345,8 +459,8 @@ final response = await client.sendCommand(
   sourceAddress: UcpAddresses.software,
   destinationAddress: UcpAddresses.device,
   op: OperationCodes.req,
-  commandClass: CommandClasses.system,
-  commandId: SystemCommandIds.deviceInfo,
+  commandClass: CommandClasses.deviceInfo,
+  commandId: DeviceInfoCommandIds.getDeviceInfo,
   options: const CommandOptions(
     waitForAck: true,
     waitForData: true,
@@ -558,6 +672,9 @@ await client.startTest(
   farmerId: 'FARMER-0012',
   fieldIndex: 'FIELD-A3',
   fieldTestIndex: 'TEST-0001',
+  globalLandLocation: 0,
+  aez: 0,
+  soilCategory: 0,
 );
 ```
 

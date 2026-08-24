@@ -24,6 +24,34 @@ void main() {
       expect(exception.message, 'Command not supported');
     });
 
+    test('parses diagnostic text TLV from hardware NACK response', () {
+      final frame = FrameBuilder().build(
+        version: 1,
+        productId: ProductIds.aunkurUcp1,
+        profileId: ProfileIds.defaultProfile,
+        sourceAddress: UcpAddresses.device,
+        destinationAddress: UcpAddresses.software,
+        op: OperationCodes.nack,
+        commandClass: CommandClasses.session,
+        commandId: SessionCommandIds.btTransportOpen,
+        sequence: 1,
+        flags: 0,
+        payload: TlvBuilder()
+            .addUint8(TlvTypes.sessionStateU8, 0)
+            .addUtf8(
+              TlvTypes.diagnosticText,
+              'unsupported UCP version/product/profile',
+            )
+            .build(),
+      );
+      final response = DeviceResponse.fromFrame(FrameParser().parse(frame));
+
+      final exception = parser.parse(response);
+
+      expect(exception.protocolErrorType, ProtocolErrorType.nackReceived);
+      expect(exception.message, 'unsupported UCP version/product/profile');
+    });
+
     test('throws when response is not a NACK', () {
       final response = DeviceResponse.success(
         sequence: 1,

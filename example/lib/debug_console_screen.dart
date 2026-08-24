@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
+import 'hardware_profiles.dart';
 import 'screens/soil_test_connection_screen.dart';
 import 'screens/soil_test_screen.dart';
 
@@ -72,7 +73,11 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     _platform = widget.platform ?? UnifiedDevicePlatform.instance;
     _client = UnifiedDeviceClient(
       UnifiedDeviceClientConfig(
-        transport: BleTransport(platform: _platform),
+        transport: BleTransport(
+          platform: _platform,
+          bleProfile: appHardwareProfile.ble,
+        ),
+        hardwareProfile: appHardwareProfile,
         logMode: UcpLogMode.raw,
       ),
     );

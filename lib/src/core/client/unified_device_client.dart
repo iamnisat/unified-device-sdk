@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'ucp_session_manager.dart';
 import 'unified_device_client_config.dart';
+import 'unified_device_hardware_profile.dart';
 import 'unified_device_session.dart';
 import '../../logging/device_communication_log.dart';
 import '../../logging/device_communication_log_controller.dart';
@@ -23,7 +24,6 @@ import '../../protocol/commands/command_options.dart';
 import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/command_ids.dart';
 import '../../protocol/constants/operation_codes.dart';
-import '../../protocol/constants/product_ids.dart';
 import '../../protocol/constants/profile_ids.dart';
 import '../../protocol/constants/protocol_constants.dart';
 import '../../protocol/constants/tlv_types.dart';
@@ -78,6 +78,7 @@ class UnifiedDeviceClient {
       sessionManager: UcpSessionManager(
         transport: config.transport,
         responseManager: responseManager,
+        hardwareProfile: config.hardwareProfile,
       ),
     );
   }
@@ -110,10 +111,12 @@ class UnifiedDeviceClient {
     int eofDelimiter = ProtocolConstants.eof,
     int protocolVersion = ProtocolConstants.currentProtocolVersion,
     UcpLogMode logMode = UcpLogMode.off,
+    UnifiedDeviceHardwareProfile hardwareProfile =
+        UnifiedDeviceHardwareProfile.aunkurUcp1,
   }) {
     return UnifiedDeviceClient(
       UnifiedDeviceClientConfig(
-        transport: transport ?? BleTransport(),
+        transport: transport ?? BleTransport(bleProfile: hardwareProfile.ble),
         defaultTimeout: defaultTimeout,
         autoReconnect: autoReconnect,
         maxReconnectAttempts: maxReconnectAttempts,
@@ -122,6 +125,7 @@ class UnifiedDeviceClient {
         eofDelimiter: eofDelimiter,
         protocolVersion: protocolVersion,
         logMode: logMode,
+        hardwareProfile: hardwareProfile,
       ),
     );
   }
@@ -132,6 +136,7 @@ class UnifiedDeviceClient {
   UcpResponseManager get responseManager => _responseManager;
   UcpSessionManager get sessionManager => _sessionManager;
   UnifiedDeviceSession? get currentSession => _sessionManager.currentSession;
+  UnifiedDeviceHardwareProfile get hardwareProfile => _config.hardwareProfile;
 
   bool get isConnected => currentSession != null;
   bool get isScanning => _transport.isScanning;
@@ -175,6 +180,10 @@ class UnifiedDeviceClient {
     _throwIfDisposed();
     await _transport.connect(device);
     await Future<void>.delayed(Duration.zero);
+    if (_config.hardwareProfile.bootstrapStrategy ==
+        UcpBootstrapStrategy.manual) {
+      return;
+    }
     await _sessionManager.bootstrap();
     await _sessionManager.waitUntilSessionActive();
   }
@@ -207,13 +216,13 @@ class UnifiedDeviceClient {
 
   Future<UcpDeviceInfo> deviceInfo({Duration? timeout}) async {
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
-      commandClass: CommandClasses.system,
-      commandId: SystemCommandIds.deviceInfo,
+      commandClass: CommandClasses.deviceInfo,
+      commandId: DeviceInfoCommandIds.getDeviceInfo,
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: true),
     );
@@ -222,10 +231,10 @@ class UnifiedDeviceClient {
 
   Future<UcpTimeSnapshot> timeRead({Duration? timeout}) async {
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.system,
       commandId: SystemCommandIds.time,
@@ -240,22 +249,29 @@ class UnifiedDeviceClient {
     required String farmerId,
     required String fieldIndex,
     required String fieldTestIndex,
+    int globalLandLocation = 0,
+    int aez = 0,
+    int soilCategory = 0,
     Duration? timeout,
   }) async {
+    final payloadBuilder = TlvBuilder()
+      ..addUtf8(TlvTypes.agentId, agentId)
+      ..addUtf8(TlvTypes.farmerId, farmerId)
+      ..addUtf8(TlvTypes.fieldIndex, fieldIndex)
+      ..addUtf8(TlvTypes.fieldTestIndex, fieldTestIndex)
+      ..addUint32BE(TlvTypes.globalLandLocation, globalLandLocation)
+      ..addUint32BE(TlvTypes.aez, aez)
+      ..addUint32BE(TlvTypes.soilCategory, soilCategory);
+
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.measurement,
       commandId: MeasurementCommandIds.startTest,
-      payload: TlvBuilder()
-          .addUtf8(TlvTypes.agentId, agentId)
-          .addUtf8(TlvTypes.farmerId, farmerId)
-          .addUtf8(TlvTypes.fieldIndex, fieldIndex)
-          .addUtf8(TlvTypes.fieldTestIndex, fieldTestIndex)
-          .build(),
+      payload: payloadBuilder.build(),
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: false),
     );
@@ -265,10 +281,10 @@ class UnifiedDeviceClient {
 
   Future<UcpLastReport> lastReport({Duration? timeout}) async {
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.report,
       commandId: ReportCommandIds.lastReport,
@@ -281,10 +297,10 @@ class UnifiedDeviceClient {
 
   Future<DeviceResponse> moistGetOn({Duration? timeout}) async {
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.moisture,
       commandId: MoistureCommandIds.moistGetOn,
@@ -297,10 +313,10 @@ class UnifiedDeviceClient {
 
   Future<DeviceResponse> moistGetOff({Duration? timeout}) async {
     final response = await sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.moisture,
       commandId: MoistureCommandIds.moistGetOff,
@@ -313,14 +329,16 @@ class UnifiedDeviceClient {
 
   Future<DeviceResponse> font(String language, {Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.ui,
       commandId: UiCommandIds.font,
-      payload: TlvBuilder().addUtf8(TlvTypes.textUtf8, language).build(),
+      payload: TlvBuilder()
+          .addUint8(TlvTypes.languageU8, _languageCode(language))
+          .build(),
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: true),
     );
@@ -328,14 +346,14 @@ class UnifiedDeviceClient {
 
   Future<DeviceResponse> cdn(String name, {Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.connectivity,
       commandId: ConnectivityCommandIds.cdn,
-      payload: TlvBuilder().addUtf8(TlvTypes.cdnName, name).build(),
+      payload: TlvBuilder().addUtf8(TlvTypes.clientName, name).build(),
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: true),
     );
@@ -349,10 +367,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.calibration,
       commandId: CalibrationCommandIds.calibrationStart,
@@ -365,10 +383,10 @@ class UnifiedDeviceClient {
   /// Gets the current calibration status.
   Future<DeviceResponse> calibrationStatus({Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.calibration,
       commandId: CalibrationCommandIds.calibrationStatus,
@@ -384,10 +402,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.calibration,
       commandId: CalibrationCommandIds.calibrationApply,
@@ -408,10 +426,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.configuration,
       commandId: ConfigurationCommandIds.configRead,
@@ -430,10 +448,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.configuration,
       commandId: ConfigurationCommandIds.configWrite,
@@ -449,10 +467,10 @@ class UnifiedDeviceClient {
   /// Lists all available configuration parameters from the device.
   Future<DeviceResponse> configList({Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.configuration,
       commandId: ConfigurationCommandIds.configList,
@@ -466,10 +484,10 @@ class UnifiedDeviceClient {
   /// Gets a list of available report IDs from the device.
   Future<DeviceResponse> reportList({Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.report,
       commandId: ReportHistoryCommandIds.reportList,
@@ -481,10 +499,10 @@ class UnifiedDeviceClient {
   /// Gets a specific historical report by ID.
   Future<DeviceResponse> reportGet({required int reportId, Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.report,
       commandId: ReportHistoryCommandIds.reportGet,
@@ -500,10 +518,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.report,
       commandId: ReportHistoryCommandIds.reportDelete,
@@ -520,10 +538,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.report,
       commandId: ReportHistoryCommandIds.reportExport,
@@ -545,10 +563,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.fileTransfer,
       commandId: FileTransferCommandIds.fileTransferStart,
@@ -568,10 +586,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.fileTransfer,
       commandId: FileTransferCommandIds.fileTransferChunk,
@@ -590,10 +608,10 @@ class UnifiedDeviceClient {
     Duration? timeout,
   }) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.fileTransfer,
       commandId: FileTransferCommandIds.fileTransferEnd,
@@ -608,10 +626,10 @@ class UnifiedDeviceClient {
   /// Gets the current file transfer status.
   Future<DeviceResponse> fileTransferStatus({Duration? timeout}) {
     return sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+      productId: _config.hardwareProfile.productId,
+      profileId: _config.hardwareProfile.profileId,
+      sourceAddress: _config.hardwareProfile.sourceAddress,
+      destinationAddress: _config.hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.fileTransfer,
       commandId: FileTransferCommandIds.fileTransferStatus,
@@ -786,6 +804,17 @@ class UnifiedDeviceClient {
     }
   }
 
+  int _languageCode(String language) {
+    final normalized = language.trim().toLowerCase();
+    if (normalized == '1' ||
+        normalized == 'bn' ||
+        normalized == 'bangla' ||
+        normalized == 'bengali') {
+      return 1;
+    }
+    return 0;
+  }
+
   void _handleInternalLogEvent(
     String event,
     Map<String, dynamic> param,
@@ -901,47 +930,59 @@ class UnifiedDeviceClient {
   }
 
   String _className(int commandClass) {
-    switch (commandClass) {
-      case CommandClasses.system:
-        return 'SYSTEM';
-      case CommandClasses.session:
-        return 'SESSION';
-      case CommandClasses.measurement:
-        return 'MEASUREMENT';
-      case CommandClasses.report:
-        return 'REPORT';
-      case CommandClasses.moisture:
-        return 'MOISTURE';
-      case CommandClasses.ui:
-        return 'UI';
-      case CommandClasses.connectivity:
-        return 'CONNECTIVITY';
-      case CommandClasses.calibration:
-        return 'CALIBRATION';
-      case CommandClasses.configuration:
-        return 'CONFIGURATION';
-      case CommandClasses.fileTransfer:
-        return 'FILE_TRANSFER';
-      default:
-        return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    if (commandClass == CommandClasses.system) {
+      return 'SYSTEM';
     }
+    if (commandClass == CommandClasses.deviceInfo) {
+      return 'DEVICE_INFO';
+    }
+    if (commandClass == CommandClasses.configuration) {
+      return 'CONFIG';
+    }
+    if (commandClass == CommandClasses.measurement) {
+      return 'MEASUREMENT';
+    }
+    if (commandClass == CommandClasses.calibration) {
+      return 'CALIBRATION';
+    }
+    if (commandClass == CommandClasses.dataLog) {
+      return 'DATA_LOG';
+    }
+    if (commandClass == CommandClasses.firmwareUpdate) {
+      return 'FIRMWARE_UPDATE';
+    }
+    if (commandClass == CommandClasses.diagnostic) {
+      return 'DIAGNOSTIC';
+    }
+    if (commandClass == CommandClasses.session) {
+      return 'SESSION';
+    }
+    if (commandClass == CommandClasses.power) {
+      return 'POWER';
+    }
+    return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
   }
 
   String _commandName(int commandClass, int commandId) {
     if (commandClass == CommandClasses.system) {
       if (commandId == SystemCommandIds.time) {
-        return 'time';
+        return 'rtc_sync';
       }
-      if (commandId == SystemCommandIds.deviceInfo) {
-        return 'device_info';
+    }
+    if (commandClass == CommandClasses.deviceInfo) {
+      if (commandId == DeviceInfoCommandIds.getDeviceInfo) {
+        return 'get_device_info';
+      }
+      if (commandId == DeviceInfoCommandIds.setClientName) {
+        return 'set_client_name';
       }
     }
     if (commandClass == CommandClasses.session) {
       if (commandId == SessionCommandIds.sessionOpenRtcSync) {
-        return 'session_open_rtc_sync';
+        return 'open_rtc_sync';
       }
       if (commandId == SessionCommandIds.sessionClose) {
-        return 'session_close';
+        return 'safe_disconnect_request';
       }
       if (commandId == SessionCommandIds.heartbeat) {
         return 'heartbeat';
@@ -957,41 +998,22 @@ class UnifiedDeviceClient {
       if (commandId == MeasurementCommandIds.stopTest) {
         return 'stop_test';
       }
-      if (commandId == MeasurementCommandIds.manTestPermit) {
-        return 'man_test_permit';
+      if (commandId == MeasurementCommandIds.startMoistureTest) {
+        return 'start_moisture_test';
       }
-    }
-    if (commandClass == CommandClasses.report) {
-      if (commandId == ReportCommandIds.lastReport) {
-        return 'last_report';
+      if (commandId == MeasurementCommandIds.stopMoistureTest) {
+        return 'stop_moisture_test';
       }
-      if (commandId == ReportHistoryCommandIds.reportList) {
-        return 'report_list';
-      }
-      if (commandId == ReportHistoryCommandIds.reportGet) {
-        return 'report_get';
-      }
-      if (commandId == ReportHistoryCommandIds.reportDelete) {
-        return 'report_delete';
-      }
-      if (commandId == ReportHistoryCommandIds.reportExport) {
-        return 'report_export';
-      }
-    }
-    if (commandClass == CommandClasses.moisture) {
-      if (commandId == MoistureCommandIds.moistGetOn) {
-        return 'moist_get_on';
-      }
-      if (commandId == MoistureCommandIds.moistGetOff) {
-        return 'moist_get_off';
+      if (commandId == MeasurementCommandIds.getLastReport) {
+        return 'get_last_report';
       }
     }
     if (commandClass == CommandClasses.ui && commandId == UiCommandIds.font) {
-      return 'font';
+      return 'set_ui_language';
     }
     if (commandClass == CommandClasses.connectivity &&
         commandId == ConnectivityCommandIds.cdn) {
-      return 'cdn';
+      return 'set_client_name';
     }
     if (commandClass == CommandClasses.calibration) {
       if (commandId == CalibrationCommandIds.calibrationStart) {

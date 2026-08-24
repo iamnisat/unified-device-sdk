@@ -29,6 +29,9 @@ class UnifiedDeviceSession {
   /// Whether a graceful close is pending.
   bool safeDisconnectPending;
 
+  /// Firmware-provided UCP session identifier.
+  int? ucpSessionId;
+
   /// Creates a [UnifiedDeviceSession].
   UnifiedDeviceSession({
     required this.sessionId,
@@ -40,6 +43,7 @@ class UnifiedDeviceSession {
     this.measurementActive = false,
     this.streamActive = false,
     this.safeDisconnectPending = false,
+    this.ucpSessionId,
   }) : startedAt = startedAt ?? DateTime.now();
 
   /// The duration the session has been active.

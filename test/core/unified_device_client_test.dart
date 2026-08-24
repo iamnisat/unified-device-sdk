@@ -1,4 +1,3 @@
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
@@ -16,31 +15,12 @@ Future<void> _completeBootstrap({
   await _drainQueue();
   expect(transport.writtenData, hasLength(1));
 
-  final transportOpenRequest = frameParser.parse(transport.writtenData[0]);
+  final sessionOpenRequest = frameParser.parse(transport.writtenData.single);
   transport.simulateIncomingData(
     frameBuilder.build(
       version: 1,
       productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.dummyM2m,
-      sourceAddress: UcpAddresses.device,
-      destinationAddress: UcpAddresses.software,
-      op: OperationCodes.ack,
-      commandClass: CommandClasses.session,
-      commandId: SessionCommandIds.btTransportOpen,
-      sequence: transportOpenRequest.sequence,
-      flags: 0,
-    ),
-  );
-
-  await _drainQueue();
-  expect(transport.writtenData, hasLength(2));
-
-  final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
-  transport.simulateIncomingData(
-    frameBuilder.build(
-      version: 1,
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.dummyM2m,
+      profileId: ProfileIds.defaultProfile,
       sourceAddress: UcpAddresses.device,
       destinationAddress: UcpAddresses.software,
       op: OperationCodes.ack,
@@ -48,6 +28,10 @@ Future<void> _completeBootstrap({
       commandId: SessionCommandIds.sessionOpenRtcSync,
       sequence: sessionOpenRequest.sequence,
       flags: 0,
+      payload: TlvBuilder()
+          .addUint16BE(TlvTypes.statusCode, 0)
+          .addUint32BE(TlvTypes.sessionId, 0xA1B2C3D4)
+          .build(),
     ),
   );
 
@@ -97,23 +81,23 @@ void main() {
         );
         await connectFuture;
 
-        final transportOpenRequest = frameParser.parse(
-          transport.writtenData[0],
-        );
-        final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
-
-        expect(transportOpenRequest.commandClass, CommandClasses.session);
-        expect(
-          transportOpenRequest.commandId,
-          SessionCommandIds.btTransportOpen,
-        );
+        final sessionOpenRequest = frameParser.parse(transport.writtenData[0]);
         expect(sessionOpenRequest.commandClass, CommandClasses.session);
         expect(
           sessionOpenRequest.commandId,
           SessionCommandIds.sessionOpenRtcSync,
         );
-        expect(states, contains(DeviceConnectionState.transportReady));
+        expect(sessionOpenRequest.profileId, ProfileIds.defaultProfile);
+        expect(
+          sessionOpenRequest.tlvs.map((tlv) => tlv.type),
+          containsAll([
+            TlvTypes.epochU64,
+            TlvTypes.clientName,
+            TlvTypes.appInstanceId,
+          ]),
+        );
         expect(client.isSessionActive, isTrue);
+        expect(client.currentSession?.ucpSessionId, 0xA1B2C3D4);
         expect(
           client.currentSession?.state,
           anyOf(
@@ -148,6 +132,127 @@ void main() {
           DeviceConnectionState.sessionActive,
         );
         expect(states.last, DeviceConnectionState.sessionActive);
+      },
+    );
+
+    test(
+      'rtc-only bootstrap sends production session open without transport open',
+      () async {
+        final connectFuture = client.connect(
+          DiscoveredDevice(
+            deviceId: 'dev-1',
+            name: BleConstants.defaultDeviceName,
+            rssi: -42,
+          ),
+        );
+
+        await _drainQueue();
+        expect(transport.writtenData, hasLength(1));
+
+        final sessionOpenRequest = frameParser.parse(transport.writtenData[0]);
+        expect(
+          sessionOpenRequest.commandId,
+          SessionCommandIds.sessionOpenRtcSync,
+        );
+        expect(
+          sessionOpenRequest.tlvs.map((tlv) => tlv.type),
+          containsAll([
+            TlvTypes.epochU64,
+            TlvTypes.clientName,
+            TlvTypes.appInstanceId,
+          ]),
+        );
+
+        transport.simulateIncomingData(
+          frameBuilder.build(
+            version: 1,
+            productId: ProductIds.aunkurUcp1,
+            profileId: ProfileIds.defaultProfile,
+            sourceAddress: UcpAddresses.device,
+            destinationAddress: UcpAddresses.software,
+            op: OperationCodes.ack,
+            commandClass: CommandClasses.session,
+            commandId: SessionCommandIds.sessionOpenRtcSync,
+            sequence: sessionOpenRequest.sequence,
+            flags: 0,
+            payload: TlvBuilder()
+                .addUint16BE(TlvTypes.statusCode, 0)
+                .addUint32BE(TlvTypes.sessionId, 0xA1B2C3D4)
+                .build(),
+          ),
+        );
+
+        await connectFuture;
+        expect(client.isSessionActive, isTrue);
+      },
+    );
+
+    test(
+      'uses custom hardware profile for session bootstrap headers',
+      () async {
+        await client.dispose();
+        await transport.dispose();
+        transport = FakeTransport();
+        const hardwareProfile = UnifiedDeviceHardwareProfile(
+          name: 'Production Device',
+          productId: ProductIds.weatherStation,
+          profileId: 0x22,
+          sourceAddress: 0x31,
+          destinationAddress: 0x41,
+          clientName: null,
+          appInstanceId: 'custom-app',
+          bootstrapStrategy: UcpBootstrapStrategy.rtcSyncOnly,
+          heartbeatEnabled: false,
+        );
+        client = UnifiedDeviceClient(
+          UnifiedDeviceClientConfig(
+            transport: transport,
+            hardwareProfile: hardwareProfile,
+          ),
+        );
+
+        final connectFuture = client.connect(
+          DiscoveredDevice(deviceId: 'prod-1', name: 'Prod', rssi: -42),
+        );
+
+        await _drainQueue();
+        expect(transport.writtenData, hasLength(1));
+
+        final sessionOpenRequest = frameParser.parse(transport.writtenData[0]);
+        expect(sessionOpenRequest.productId, ProductIds.weatherStation);
+        expect(sessionOpenRequest.profileId, 0x22);
+        expect(sessionOpenRequest.sourceAddress, 0x31);
+        expect(sessionOpenRequest.destinationAddress, 0x41);
+        expect(
+          sessionOpenRequest.commandId,
+          SessionCommandIds.sessionOpenRtcSync,
+        );
+        expect(sessionOpenRequest.tlvs.map((tlv) => tlv.type), [
+          TlvTypes.epochU64,
+          TlvTypes.appInstanceId,
+        ]);
+
+        transport.simulateIncomingData(
+          frameBuilder.build(
+            version: 1,
+            productId: ProductIds.weatherStation,
+            profileId: 0x22,
+            sourceAddress: 0x41,
+            destinationAddress: 0x31,
+            op: OperationCodes.ack,
+            commandClass: CommandClasses.session,
+            commandId: SessionCommandIds.sessionOpenRtcSync,
+            sequence: sessionOpenRequest.sequence,
+            flags: 0,
+            payload: TlvBuilder()
+                .addUint16BE(TlvTypes.statusCode, 0)
+                .addUint32BE(TlvTypes.sessionId, 0x01020304)
+                .build(),
+          ),
+        );
+
+        await connectFuture;
+        expect(client.isSessionActive, isTrue);
       },
     );
 
@@ -222,6 +327,66 @@ void main() {
       expect(events.single.eventCode, 0xAB);
     });
 
+    test('tracks production soil test progress and error events', () async {
+      await _completeBootstrapForClient(
+        client: client,
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
+      );
+
+      transport.simulateIncomingData(
+        frameBuilder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.defaultProfile,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
+          op: OperationCodes.event,
+          commandClass: CommandClasses.measurement,
+          commandId: MeasurementCommandIds.startTest,
+          sequence: 10,
+          flags: 0,
+          payload: TlvBuilder()
+              .addUint16BE(TlvTypes.statusCode, 0)
+              .addUtf8(TlvTypes.messageText, 'T#96%')
+              .addUint8(TlvTypes.sampleSizePercent, 96)
+              .build(),
+        ),
+      );
+      await _drainQueue();
+
+      expect(client.currentSession?.measurementActive, isTrue);
+      expect(
+        client.currentSession?.state,
+        DeviceConnectionState.measurementActive,
+      );
+
+      transport.simulateIncomingData(
+        frameBuilder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.defaultProfile,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
+          op: OperationCodes.event,
+          commandClass: CommandClasses.measurement,
+          commandId: MeasurementCommandIds.startTest,
+          sequence: 11,
+          flags: 0,
+          payload: TlvBuilder()
+              .addUint16BE(TlvTypes.statusCode, 0)
+              .addUtf8(TlvTypes.messageText, 'SOIL_TEST_ERROR')
+              .addUint8(TlvTypes.fwStateU8, 6)
+              .build(),
+        ),
+      );
+      await _drainQueue();
+
+      expect(client.currentSession?.measurementActive, isFalse);
+      expect(client.currentSession?.state, DeviceConnectionState.sessionActive);
+    });
+
     test('emits basic communication logs with a stable session id', () async {
       await client.dispose();
       await transport.dispose();
@@ -251,7 +416,7 @@ void main() {
         containsAll(<String>[
           'connected',
           'mtu_ready',
-          'transport_ready',
+          'session_open_started',
           'session_active',
         ]),
       );

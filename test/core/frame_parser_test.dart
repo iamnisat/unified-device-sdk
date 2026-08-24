@@ -1,56 +1,94 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
-List<int> _hex(String value) {
-  return value.split(' ').map((byte) => int.parse(byte, radix: 16)).toList();
-}
-
 void main() {
   group('UcpFrameParser', () {
     late UcpFrameParser parser;
+    late UcpFrameBuilder builder;
 
     setUp(() {
       parser = UcpFrameParser();
+      builder = UcpFrameBuilder();
     });
 
     test('parses official start_test request and decodes TLVs', () {
       final frame = parser.parse(
-        _hex(
-          'DD 01 01 01 01 10 01 03 01 00 07 00 00 30 '
-          '30 00 0A 41 47 45 4E 54 2D 44 45 4D 4F '
-          '31 00 0A 46 41 52 4D 45 52 2D 30 30 31 '
-          '32 00 07 46 49 45 4C 44 2D 41 '
-          '33 00 09 54 45 53 54 2D 30 30 30 31 '
-          '62 DA 77',
+        builder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          op: OperationCodes.req,
+          commandClass: CommandClasses.measurement,
+          commandId: MeasurementCommandIds.startTest,
+          sequence: 7,
+          flags: 0,
+          tlvs: [
+            Tlv(type: TlvTypes.agentId, value: 'AGENT-DEMO'.codeUnits),
+            Tlv(type: TlvTypes.farmerId, value: 'FARMER-001'.codeUnits),
+            Tlv(type: TlvTypes.fieldId, value: 'FIELD-A'.codeUnits),
+            Tlv(type: TlvTypes.testId, value: 'TEST-0001'.codeUnits),
+            Tlv(type: TlvTypes.globalLandLocation, value: [0, 0, 0, 0]),
+            Tlv(type: TlvTypes.aez, value: [0, 0, 0, 0]),
+            Tlv(type: TlvTypes.soilCategory, value: [0, 0, 0, 0]),
+          ],
         ),
       );
 
       expect(frame.productId, ProductIds.aunkurUcp1);
-      expect(frame.profileId, ProfileIds.dummyM2m);
+      expect(frame.profileId, ProfileIds.defaultProfile);
       expect(frame.sourceAddress, UcpAddresses.software);
       expect(frame.destinationAddress, UcpAddresses.device);
       expect(frame.op, OperationCodes.req);
       expect(frame.commandClass, CommandClasses.measurement);
       expect(frame.commandId, MeasurementCommandIds.startTest);
       expect(frame.sequence, 7);
-      expect(frame.payloadLength, 48);
-      expect(frame.tlvs, hasLength(4));
+      expect(frame.payloadLength, 69);
+      expect(frame.tlvs, hasLength(7));
       expect(frame.tlvs[0].type, TlvTypes.agentId);
       expect(frame.tlvs[0].asAsciiString(), 'AGENT-DEMO');
       expect(frame.tlvs[3].type, TlvTypes.testId);
+      expect(frame.tlvs[4].type, TlvTypes.globalLandLocation);
+      expect(frame.tlvs[5].type, TlvTypes.aez);
+      expect(frame.tlvs[6].type, TlvTypes.soilCategory);
       expect(frame.tlvs[3].asAsciiString(), 'TEST-0001');
     });
 
     test('parses empty-payload system request', () {
       final frame = parser.parse(
-        _hex('DD 01 01 01 01 10 01 01 02 00 03 00 00 00 65 C6 77'),
+        builder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          op: OperationCodes.req,
+          commandClass: CommandClasses.deviceInfo,
+          commandId: DeviceInfoCommandIds.getDeviceInfo,
+          sequence: 3,
+          flags: 0,
+        ),
       );
 
-      expect(frame.commandClass, CommandClasses.system);
-      expect(frame.commandId, SystemCommandIds.deviceInfo);
+      expect(frame.commandClass, CommandClasses.deviceInfo);
+      expect(frame.commandId, DeviceInfoCommandIds.getDeviceInfo);
       expect(frame.sequence, 3);
       expect(frame.payload, isEmpty);
       expect(frame.tlvs, isEmpty);
+    });
+
+    test('decodes one-byte firmware state on shared 0x54 TLV', () {
+      final frame = parser.parse(
+        builder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          op: OperationCodes.event,
+          commandClass: CommandClasses.measurement,
+          commandId: MeasurementCommandIds.startTest,
+          sequence: 8,
+          flags: 0,
+          tlvs: [Tlv(type: TlvTypes.fwStateU8, value: const [6])],
+        ),
+      );
+
+      final decoded = DecodedTlv.fromTlv(frame.tlvs.single);
+      expect(decoded.type, TlvTypes.fwStateU8);
+      expect(decoded.value, 6);
     });
 
     test('preserves raw payload when it is not valid TLV', () {
@@ -72,7 +110,15 @@ void main() {
     });
 
     test('throws on CRC mismatch', () {
-      final bytes = _hex('DD 01 01 01 01 10 01 01 02 00 03 00 00 00 65 C6 77');
+      final bytes = builder.build(
+        version: 1,
+        productId: ProductIds.aunkurUcp1,
+        op: OperationCodes.req,
+        commandClass: CommandClasses.deviceInfo,
+        commandId: DeviceInfoCommandIds.getDeviceInfo,
+        sequence: 3,
+        flags: 0,
+      );
       bytes[bytes.length - 2] ^= 0xFF;
 
       expect(() => parser.parse(bytes), throwsA(isA<CrcException>()));

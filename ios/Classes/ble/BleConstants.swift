@@ -8,9 +8,9 @@ struct BleConstants {
     static let connectionEventChannelName = "unified_device_sdk/ble/connection"
     static let notificationEventChannelName = "unified_device_sdk/ble/notification"
 
-    static let serviceUUID = CBUUID(string: "FFE0")
-    static let notifyCharacteristicUUID = CBUUID(string: "FFE1")
-    static let writeCharacteristicUUID = CBUUID(string: "FFE2")
+    static let defaultServiceUUID = CBUUID(string: "FFE0")
+    static let defaultNotifyCharacteristicUUID = CBUUID(string: "FFE1")
+    static let defaultWriteCharacteristicUUID = CBUUID(string: "FFE2")
 
     static let stateConnecting = "connecting"
     static let stateConnected = "connected"

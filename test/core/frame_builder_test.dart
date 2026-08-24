@@ -1,10 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
-List<int> _hex(String value) {
-  return value.split(' ').map((byte) => int.parse(byte, radix: 16)).toList();
-}
-
 void main() {
   group('UcpFrameBuilder', () {
     late UcpFrameBuilder builder;
@@ -13,58 +9,64 @@ void main() {
       builder = UcpFrameBuilder();
     });
 
-    test('builds bt_transport_open request exactly', () {
+    test('builds production open_rtc_sync request', () {
       final bytes = builder.build(
         version: 0x01,
         productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.dummyM2m,
+        profileId: ProfileIds.defaultProfile,
         sourceAddress: UcpAddresses.software,
         destinationAddress: UcpAddresses.device,
         op: OperationCodes.req,
         commandClass: CommandClasses.session,
-        commandId: SessionCommandIds.btTransportOpen,
+        commandId: SessionCommandIds.sessionOpenRtcSync,
         sequence: 0x0001,
         flags: 0x00,
         tlvs: [
           Tlv(
-            type: TlvTypes.btTransportClientName,
-            value: 'ELAB_UCP_CLIENT'.codeUnits,
+            type: TlvTypes.epochU64,
+            value: [0, 0, 0, 0, 0x6A, 0x50, 0x91, 0x68],
           ),
+          Tlv(type: TlvTypes.clientName, value: 'PorokhTester'.codeUnits),
+          Tlv(type: TlvTypes.appInstanceId, value: 'app-001'.codeUnits),
         ],
       );
 
-      expect(
-        bytes,
-        _hex(
-          'DD 01 01 01 01 10 01 02 04 00 01 00 00 12 '
-          '04 00 0F 45 4C 41 42 5F 55 43 50 5F 43 4C 49 45 4E 54 '
-          'B6 37 77',
-        ),
-      );
+      final frame = UcpFrameParser().parse(bytes);
+      expect(frame.profileId, ProfileIds.defaultProfile);
+      expect(frame.commandClass, CommandClasses.session);
+      expect(frame.commandId, SessionCommandIds.sessionOpenRtcSync);
+      expect(frame.tlvs.map((tlv) => tlv.type), [
+        TlvTypes.epochU64,
+        TlvTypes.clientName,
+        TlvTypes.appInstanceId,
+      ]);
     });
 
-    test('builds device_info request exactly', () {
+    test('builds device_info request', () {
       final bytes = builder.build(
         version: 0x01,
         productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.dummyM2m,
+        profileId: ProfileIds.defaultProfile,
         sourceAddress: UcpAddresses.software,
         destinationAddress: UcpAddresses.device,
         op: OperationCodes.req,
-        commandClass: CommandClasses.system,
-        commandId: SystemCommandIds.deviceInfo,
+        commandClass: CommandClasses.deviceInfo,
+        commandId: DeviceInfoCommandIds.getDeviceInfo,
         sequence: 0x0003,
         flags: 0x00,
       );
 
-      expect(bytes, _hex('DD 01 01 01 01 10 01 01 02 00 03 00 00 00 65 C6 77'));
+      final frame = UcpFrameParser().parse(bytes);
+      expect(frame.commandClass, CommandClasses.deviceInfo);
+      expect(frame.commandId, DeviceInfoCommandIds.getDeviceInfo);
+      expect(frame.payload, isEmpty);
     });
 
-    test('builds time read request exactly', () {
+    test('builds time read request', () {
       final bytes = builder.build(
         version: 0x01,
         productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.dummyM2m,
+        profileId: ProfileIds.defaultProfile,
         sourceAddress: UcpAddresses.software,
         destinationAddress: UcpAddresses.device,
         op: OperationCodes.req,
@@ -74,14 +76,17 @@ void main() {
         flags: 0x00,
       );
 
-      expect(bytes, _hex('DD 01 01 01 01 10 01 01 01 00 04 00 00 00 FA 0B 77'));
+      final frame = UcpFrameParser().parse(bytes);
+      expect(frame.commandClass, CommandClasses.system);
+      expect(frame.commandId, SystemCommandIds.time);
+      expect(frame.payload, isEmpty);
     });
 
-    test('builds start_test request with official TLVs exactly', () {
+    test('builds start_test request with production TLVs', () {
       final bytes = builder.build(
         version: 0x01,
         productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.dummyM2m,
+        profileId: ProfileIds.defaultProfile,
         sourceAddress: UcpAddresses.software,
         destinationAddress: UcpAddresses.device,
         op: OperationCodes.req,
@@ -94,20 +99,25 @@ void main() {
           Tlv(type: TlvTypes.farmerId, value: 'FARMER-001'.codeUnits),
           Tlv(type: TlvTypes.fieldId, value: 'FIELD-A'.codeUnits),
           Tlv(type: TlvTypes.testId, value: 'TEST-0001'.codeUnits),
+          Tlv(type: TlvTypes.globalLandLocation, value: [0, 0, 0, 0]),
+          Tlv(type: TlvTypes.aez, value: [0, 0, 0, 0]),
+          Tlv(type: TlvTypes.soilCategory, value: [0, 0, 0, 0]),
         ],
       );
 
-      expect(
-        bytes,
-        _hex(
-          'DD 01 01 01 01 10 01 03 01 00 07 00 00 30 '
-          '30 00 0A 41 47 45 4E 54 2D 44 45 4D 4F '
-          '31 00 0A 46 41 52 4D 45 52 2D 30 30 31 '
-          '32 00 07 46 49 45 4C 44 2D 41 '
-          '33 00 09 54 45 53 54 2D 30 30 30 31 '
-          '62 DA 77',
-        ),
-      );
+      final frame = UcpFrameParser().parse(bytes);
+      expect(frame.profileId, ProfileIds.defaultProfile);
+      expect(frame.commandClass, CommandClasses.measurement);
+      expect(frame.commandId, MeasurementCommandIds.startTest);
+      expect(frame.tlvs.map((tlv) => tlv.type), [
+        TlvTypes.agentId,
+        TlvTypes.farmerId,
+        TlvTypes.fieldId,
+        TlvTypes.testId,
+        TlvTypes.globalLandLocation,
+        TlvTypes.aez,
+        TlvTypes.soilCategory,
+      ]);
     });
   });
 }

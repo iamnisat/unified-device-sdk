@@ -23,11 +23,11 @@ void main() {
       expect(frame.sourceAddress, UcpAddresses.defaultSource);
       expect(frame.destinationAddress, UcpAddresses.defaultDestination);
       expect(frame.payload, [
-        0x30,
+        TlvTypes.agentId,
         0x00,
         0x0A,
         ...'AGENT-DEMO'.codeUnits,
-        0x33,
+        TlvTypes.testId,
         0x00,
         0x09,
         ...'TEST-0001'.codeUnits,

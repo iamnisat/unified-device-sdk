@@ -10,14 +10,18 @@ class BleMethodCallHandler(
 ) : MethodChannel.MethodCallHandler {
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "startScan" -> bleManager.startScan(result)
+            "startScan" -> {
+                @Suppress("UNCHECKED_CAST")
+                bleManager.startScan(call.arguments as? Map<String, Any?>, result)
+            }
             "stopScan" -> bleManager.stopScan(result)
             "connect" -> {
                 val deviceId = call.argument<String>("deviceId")
                 if (deviceId.isNullOrBlank()) {
                     result.error("invalid_argument", "Missing deviceId", null)
                 } else {
-                    bleManager.connect(deviceId, result)
+                    @Suppress("UNCHECKED_CAST")
+                    bleManager.connect(deviceId, call.arguments as? Map<String, Any?>, result)
                 }
             }
 

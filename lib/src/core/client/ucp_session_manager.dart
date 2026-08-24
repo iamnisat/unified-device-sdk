@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'unified_device_hardware_profile.dart';
 import 'unified_device_session.dart';
+import '../errors/protocol_exception.dart';
 import '../errors/transport_exception.dart';
 import '../response/device_event.dart';
 import '../response/device_response.dart';
@@ -13,11 +15,8 @@ import '../../protocol/constants/ble_constants.dart';
 import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/command_ids.dart';
 import '../../protocol/constants/operation_codes.dart';
-import '../../protocol/constants/product_ids.dart';
-import '../../protocol/constants/profile_ids.dart';
 import '../../protocol/constants/protocol_constants.dart';
 import '../../protocol/constants/tlv_types.dart';
-import '../../protocol/constants/ucp_addresses.dart';
 import '../../protocol/models/decoded_tlv.dart';
 import '../../protocol/payloads/tlv_builder.dart';
 
@@ -25,6 +24,7 @@ import '../../protocol/payloads/tlv_builder.dart';
 class UcpSessionManager {
   final DeviceTransport _transport;
   final UcpResponseManager _responseManager;
+  final UnifiedDeviceHardwareProfile _hardwareProfile;
 
   final StreamController<DeviceConnectionState> _stateController =
       StreamController<DeviceConnectionState>.broadcast();
@@ -53,9 +53,11 @@ class UcpSessionManager {
   UcpSessionManager({
     required DeviceTransport transport,
     required UcpResponseManager responseManager,
+    required UnifiedDeviceHardwareProfile hardwareProfile,
     this.onLogEvent,
   }) : _transport = transport,
-       _responseManager = responseManager {
+       _responseManager = responseManager,
+       _hardwareProfile = hardwareProfile {
     _bind();
   }
 
@@ -99,48 +101,56 @@ class UcpSessionManager {
     return _startBootstrapIfNeeded();
   }
 
-  Future<DeviceResponse> openTransport() {
-    final payload = TlvBuilder()
-        .addUtf8(TlvTypes.textUtf8, 'ELAB_UCP_CLIENT')
-        .build();
-    return _responseManager.sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+  Future<DeviceResponse> openTransport({bool includeClientName = true}) async {
+    final response = await _responseManager.sendCommand(
+      productId: _hardwareProfile.productId,
+      profileId: _hardwareProfile.profileId,
+      sourceAddress: _hardwareProfile.sourceAddress,
+      destinationAddress: _hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.session,
       commandId: SessionCommandIds.btTransportOpen,
-      payload: payload,
+      payload: _clientNamePayload(includeClientName: includeClientName),
       options: const CommandOptions(
         waitForAck: true,
         waitForData: false,
         completeOnEvent: true,
       ),
     );
+    _emitLog('transport_ready', <String, dynamic>{
+      'level': 'info',
+      'layer': 'ucp',
+      'state': DeviceConnectionState.transportReady.name,
+    }, UcpLogMode.basic);
+    _updateState(DeviceConnectionState.transportReady);
+    return response;
   }
 
-  Future<DeviceResponse> openRtcSession({DateTime? now}) {
-    final epochSeconds = (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000;
-    final payload = TlvBuilder()
-        .addUint64BE(TlvTypes.epochU64, epochSeconds)
-        .addUtf8(TlvTypes.textUtf8, 'ELAB_UCP_CLIENT')
-        .build();
-    return _responseManager.sendCommand(
-      productId: ProductIds.aunkurUcp1,
-      profileId: ProfileIds.defaultProfile,
-      sourceAddress: UcpAddresses.software,
-      destinationAddress: UcpAddresses.device,
+  Future<DeviceResponse> openRtcSession({
+    DateTime? now,
+    bool includeClientName = true,
+  }) async {
+    final epochSeconds = _epochSecondsForRtc(now ?? DateTime.now());
+    final response = await _responseManager.sendCommand(
+      productId: _hardwareProfile.productId,
+      profileId: _hardwareProfile.profileId,
+      sourceAddress: _hardwareProfile.sourceAddress,
+      destinationAddress: _hardwareProfile.destinationAddress,
       op: OperationCodes.req,
       commandClass: CommandClasses.session,
       commandId: SessionCommandIds.sessionOpenRtcSync,
-      payload: payload,
+      payload: _sessionOpenPayload(
+        epochSeconds,
+        includeClientName: includeClientName,
+      ),
       options: const CommandOptions(
         waitForAck: true,
         waitForData: false,
         completeOnEvent: true,
       ),
     );
+    _activateSession(response);
+    return response;
   }
 
   Future<void> closeSession({
@@ -171,15 +181,16 @@ class UcpSessionManager {
 
     try {
       await _responseManager.sendCommand(
-        productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.defaultProfile,
-        sourceAddress: UcpAddresses.software,
-        destinationAddress: UcpAddresses.device,
+        productId: _hardwareProfile.productId,
+        profileId: _hardwareProfile.profileId,
+        sourceAddress: _hardwareProfile.sourceAddress,
+        destinationAddress: _hardwareProfile.destinationAddress,
         op: OperationCodes.req,
         commandClass: CommandClasses.session,
         commandId: SessionCommandIds.sessionClose,
         payload: TlvBuilder()
-            .addUtf8(TlvTypes.textUtf8, 'normal close')
+            .addUint32BE(TlvTypes.sessionId, _currentSession?.ucpSessionId ?? 0)
+            .addUint8(TlvTypes.disconnectReason, 1)
             .build(),
         options: const CommandOptions(
           waitForAck: true,
@@ -338,36 +349,51 @@ class UcpSessionManager {
 
   Future<void> _runBootstrap(Completer<void> completer) async {
     try {
-      _emitLog('transport_open_started', <String, dynamic>{
-        'level': 'info',
-        'layer': 'ucp',
-        'state': 'bootstrapping',
-      }, UcpLogMode.basic);
-      await openTransport();
-      _emitLog('transport_ready', <String, dynamic>{
-        'level': 'info',
-        'layer': 'ucp',
-        'state': DeviceConnectionState.transportReady.name,
-      }, UcpLogMode.basic);
-      _updateState(DeviceConnectionState.transportReady);
+      final strategy = _hardwareProfile.bootstrapStrategy;
+      var usedCompatibilityFallback = false;
+      if (strategy == UcpBootstrapStrategy.manual) {
+        _emitLog('transport_ready', <String, dynamic>{
+          'level': 'info',
+          'layer': 'ucp',
+          'state': DeviceConnectionState.transportReady.name,
+          'message': 'Automatic UCP bootstrap disabled by hardware profile',
+        }, UcpLogMode.basic);
+        _updateState(DeviceConnectionState.transportReady);
+        completer.complete();
+        return;
+      }
+
+      if (strategy == UcpBootstrapStrategy.transportOpenThenRtcSync) {
+        _emitLog('transport_open_started', <String, dynamic>{
+          'level': 'info',
+          'layer': 'ucp',
+          'state': 'bootstrapping',
+        }, UcpLogMode.basic);
+        try {
+          await openTransport();
+        } on ProtocolException catch (error) {
+          if (!_isBootstrapCompatibilityNack(error)) {
+            rethrow;
+          }
+          _emitLog('bootstrap_compatibility_fallback', <String, dynamic>{
+            'level': 'info',
+            'layer': 'ucp',
+            'state': DeviceConnectionState.mtuReady.name,
+            'message':
+                'bt_transport_open was rejected; retrying with RTC session only',
+            'nackMessage': error.message,
+          }, UcpLogMode.basic);
+          _updateState(DeviceConnectionState.transportReady);
+          usedCompatibilityFallback = true;
+        }
+      }
+
       _emitLog('session_open_started', <String, dynamic>{
         'level': 'info',
         'layer': 'ucp',
         'state': 'bootstrapping',
       }, UcpLogMode.basic);
-      await openRtcSession();
-      if (_currentSession != null) {
-        _currentSession!
-          ..sessionActive = true
-          ..safeDisconnectPending = false;
-      }
-      _emitLog('session_active', <String, dynamic>{
-        'level': 'info',
-        'layer': 'ucp',
-        'state': DeviceConnectionState.sessionActive.name,
-      }, UcpLogMode.basic);
-      _updateState(DeviceConnectionState.sessionActive);
-      _startHeartbeat();
+      await openRtcSession(includeClientName: !usedCompatibilityFallback);
       completer.complete();
     } catch (error, stackTrace) {
       _emitLog('handshake_failed', <String, dynamic>{
@@ -381,7 +407,6 @@ class UcpSessionManager {
       if (!completer.isCompleted) {
         completer.completeError(error, stackTrace);
       }
-      rethrow;
     } finally {
       if (identical(_bootstrapCompleter, completer)) {
         _bootstrapCompleter = null;
@@ -402,13 +427,29 @@ class UcpSessionManager {
     if (frame.commandClass == CommandClasses.measurement &&
         frame.commandId == MeasurementCommandIds.startTest) {
       final decoded = _responseManager.decodeTlvs(frame);
-      final status = _findInt(decoded, TlvTypes.statusU8);
-      final text = _findString(decoded, TlvTypes.textUtf8);
-      if (status == 4 ||
-          (text != null && text.contains('report ready for last_report'))) {
+      final status =
+          _findInt(decoded, TlvTypes.statusCode) ??
+          _findInt(decoded, TlvTypes.statusU8);
+      final text =
+          _findString(decoded, TlvTypes.messageText) ??
+          _findString(decoded, TlvTypes.textUtf8);
+      final samplePercent = _findInt(decoded, TlvTypes.sampleSizePercent);
+      final firmwareState = _findInt(decoded, TlvTypes.fwStateU8);
+      final normalized = text?.toLowerCase() ?? '';
+      final hasError =
+          (status != null && status != 0) ||
+          normalized.contains('error') ||
+          firmwareState == 6;
+      final complete =
+          status == 4 ||
+          firmwareState == 5 ||
+          normalized.contains('report ready for last_report') ||
+          normalized.contains('complete') ||
+          normalized.contains('completed');
+      if (hasError || complete) {
         markMeasurementActive(false);
       } else {
-        markMeasurementActive(true);
+        markMeasurementActive(samplePercent == null || samplePercent < 100);
       }
     }
 
@@ -434,6 +475,79 @@ class UcpSessionManager {
       }
     }
     return null;
+  }
+
+  bool _isBootstrapCompatibilityNack(ProtocolException error) {
+    if (error.protocolErrorType != ProtocolErrorType.nackReceived) {
+      return false;
+    }
+    final message = error.message.toLowerCase();
+    return message.contains('unsupported ucp') ||
+        (message.contains('version') &&
+            message.contains('product') &&
+            message.contains('profile'));
+  }
+
+  List<int> _clientNamePayload({required bool includeClientName}) {
+    if (!includeClientName) {
+      return const <int>[];
+    }
+    final clientName = _hardwareProfile.clientName;
+    if (clientName == null || clientName.isEmpty) {
+      return const <int>[];
+    }
+    return TlvBuilder().addUtf8(TlvTypes.clientName, clientName).build();
+  }
+
+  List<int> _sessionOpenPayload(
+    int epochSeconds, {
+    required bool includeClientName,
+  }) {
+    final builder = TlvBuilder().addUint64BE(TlvTypes.epochU64, epochSeconds);
+    final clientName = _hardwareProfile.clientName;
+    if (includeClientName && clientName != null && clientName.isNotEmpty) {
+      builder.addUtf8(TlvTypes.clientName, clientName);
+    }
+    builder.addUtf8(TlvTypes.appInstanceId, _hardwareProfile.appInstanceId);
+    final appUserId = _hardwareProfile.appUserId;
+    if (appUserId != null && appUserId.isNotEmpty) {
+      builder.addUtf8(TlvTypes.appUserId, appUserId);
+    }
+    return builder.build();
+  }
+
+  int _epochSecondsForRtc(DateTime value) {
+    if (!_hardwareProfile.syncRtcAsLocalWallClock) {
+      return value.toUtc().millisecondsSinceEpoch ~/ 1000;
+    }
+    final local = value.toLocal();
+    return DateTime.utc(
+          local.year,
+          local.month,
+          local.day,
+          local.hour,
+          local.minute,
+          local.second,
+        ).millisecondsSinceEpoch ~/
+        1000;
+  }
+
+  void _activateSession(DeviceResponse response) {
+    if (_currentSession != null) {
+      _currentSession!.ucpSessionId = _sessionIdFromResponse(response);
+      _currentSession!
+        ..sessionActive = true
+        ..safeDisconnectPending = false;
+    }
+    _emitLog('session_active', <String, dynamic>{
+      'level': 'info',
+      'layer': 'ucp',
+      'state': DeviceConnectionState.sessionActive.name,
+    }, UcpLogMode.basic);
+    _updateState(DeviceConnectionState.sessionActive);
+    if (_hardwareProfile.heartbeatEnabled) {
+      _startHeartbeat();
+    }
   }
 
   void _startHeartbeat() {
@@ -470,13 +584,14 @@ class UcpSessionManager {
   Future<void> _sendHeartbeatFrame() async {
     try {
       await _responseManager.sendCommand(
-        productId: ProductIds.aunkurUcp1,
-        profileId: ProfileIds.defaultProfile,
-        sourceAddress: UcpAddresses.software,
-        destinationAddress: UcpAddresses.device,
-        op: OperationCodes.req,
+        productId: _hardwareProfile.productId,
+        profileId: _hardwareProfile.profileId,
+        sourceAddress: _hardwareProfile.sourceAddress,
+        destinationAddress: _hardwareProfile.destinationAddress,
+        op: OperationCodes.heartbeat,
         commandClass: CommandClasses.session,
         commandId: SessionCommandIds.heartbeat,
+        payload: _activeSessionIdPayload(),
         options: const CommandOptions(
           waitForAck: true,
           waitForData: false,
@@ -490,6 +605,29 @@ class UcpSessionManager {
         _onHeartbeatMissed();
       }
     }
+  }
+
+  int? _sessionIdFromResponse(DeviceResponse response) {
+    final frame = response.sourceFrame;
+    if (frame == null) {
+      return null;
+    }
+    for (final decoded in _responseManager.decodeTlvs(frame)) {
+      if ((decoded.type == TlvTypes.sessionId ||
+              decoded.type == TlvTypes.sessionIdU32) &&
+          decoded.value is int) {
+        return decoded.value as int;
+      }
+    }
+    return null;
+  }
+
+  List<int> _activeSessionIdPayload() {
+    final sessionId = _currentSession?.ucpSessionId;
+    if (sessionId == null) {
+      return const <int>[];
+    }
+    return TlvBuilder().addUint32BE(TlvTypes.sessionId, sessionId).build();
   }
 
   void _onHeartbeatMissed() {

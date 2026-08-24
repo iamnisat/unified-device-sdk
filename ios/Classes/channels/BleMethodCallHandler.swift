@@ -14,7 +14,10 @@ final class BleMethodCallHandler: NSObject, FlutterPlugin {
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "startScan":
-            bleManager.startScan(result: result)
+            bleManager.startScan(
+                arguments: call.arguments as? [String: Any],
+                result: result
+            )
         case "stopScan":
             bleManager.stopScan(result: result)
         case "connect":
@@ -31,7 +34,11 @@ final class BleMethodCallHandler: NSObject, FlutterPlugin {
                 )
                 return
             }
-            bleManager.connect(deviceId: deviceId, result: result)
+            bleManager.connect(
+                deviceId: deviceId,
+                arguments: arguments,
+                result: result
+            )
         case "disconnect":
             bleManager.disconnect(result: result)
         case "write":

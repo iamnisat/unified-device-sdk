@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
+import '../hardware_profiles.dart';
 import '../widgets/connection_status_bar.dart';
 import 'soil_test_screen.dart';
 
@@ -61,7 +62,11 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
         widget.client ??
         UnifiedDeviceClient(
           UnifiedDeviceClientConfig(
-            transport: BleTransport(platform: _platform),
+            transport: BleTransport(
+              platform: _platform,
+              bleProfile: appHardwareProfile.ble,
+            ),
+            hardwareProfile: appHardwareProfile,
             logMode: UcpLogMode.raw,
           ),
         );
