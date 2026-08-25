@@ -14,8 +14,7 @@ class NackParser {
 
   /// Converts a NACK response into a [ProtocolException].
   ///
-  /// By convention, if the payload is non-empty the first byte is treated
-  /// as the device-provided error code.
+  /// Supports production TLV NACKs and legacy raw one/two-byte error payloads.
   ProtocolException parse(DeviceResponse response) {
     if (response.op != OperationCodes.nack) {
       throw const ProtocolException(
@@ -25,9 +24,12 @@ class NackParser {
     }
 
     final details = parseDetails(response);
+    final message = details.text == null && response.errorMessage != null
+        ? response.errorMessage!
+        : details.displayMessage;
     return ProtocolException(
-      details.text ?? response.errorMessage ?? 'Device returned NACK',
-      errorCode: details.errorCode ?? response.flags,
+      message,
+      errorCode: details.effectiveCode ?? _flagErrorCode(response),
       protocolErrorType: ProtocolErrorType.nackReceived,
     );
   }
@@ -35,4 +37,7 @@ class NackParser {
   UcpNackDetails parseDetails(DeviceResponse response) {
     return _responseParser.parseNack(response);
   }
+
+  int? _flagErrorCode(DeviceResponse response) =>
+      response.flags == 0 ? null : response.flags;
 }

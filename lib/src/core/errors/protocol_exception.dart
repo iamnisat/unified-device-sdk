@@ -1,4 +1,5 @@
 import 'unified_device_exception.dart';
+import '../../protocol/constants/ucp_status_codes.dart';
 
 /// Exception thrown for higher-level protocol errors.
 class ProtocolException extends UnifiedDeviceException {
@@ -10,6 +11,11 @@ class ProtocolException extends UnifiedDeviceException {
     super.stackTrace,
     this.protocolErrorType = ProtocolErrorType.unknown,
   });
+
+  UcpStatusCodeInfo? get ucpStatus => UcpStatusCodes.lookup(errorCode);
+  String? get errorName => ucpStatus?.name;
+  String? get errorDescription => ucpStatus?.description;
+  bool get isRetryable => ucpStatus?.retryable ?? false;
 
   @override
   String toString() => 'ProtocolException[$protocolErrorType]: $message';

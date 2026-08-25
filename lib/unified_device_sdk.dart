@@ -64,6 +64,7 @@ export 'src/protocol/constants/common_command_ids.dart';
 export 'src/protocol/constants/command_classes.dart';
 export 'src/protocol/constants/command_ids.dart';
 export 'src/protocol/constants/tlv_types.dart';
+export 'src/protocol/constants/ucp_status_codes.dart';
 
 // Protocol exports - Commands
 export 'src/protocol/commands/device_command.dart';

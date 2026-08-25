@@ -45,9 +45,7 @@ class CommonResponseParser {
       errorCode:
           _intValue(lookup[TlvTypes.errorCodeU16]) ??
           _intValue(lookup[TlvTypes.statusCode]) ??
-          (response.payload.isNotEmpty
-              ? response.payload.first
-              : response.flags),
+          (decoded.isEmpty ? _rawErrorCode(response) : null),
       text:
           _stringValue(lookup[TlvTypes.messageText]) ??
           _stringValue(lookup[TlvTypes.textUtf8]),
@@ -158,6 +156,16 @@ class CommonResponseParser {
   int? _intValue(DecodedTlv? tlv) {
     final value = tlv?.value;
     return value is int ? value : null;
+  }
+
+  int _rawErrorCode(DeviceResponse response) {
+    if (response.payload.length >= 2) {
+      return (response.payload[0] << 8) | response.payload[1];
+    }
+    if (response.payload.isNotEmpty) {
+      return response.payload.first;
+    }
+    return response.flags;
   }
 
   double? _doubleValue(DecodedTlv? tlv) {

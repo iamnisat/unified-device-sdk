@@ -361,14 +361,23 @@ class UcpResponseManager {
       'level': 'error',
       'layer': 'ucp',
       'status': details.status,
-      'errorCode': details.errorCode,
-      'message':
-          details.text ?? response.errorMessage ?? 'Device returned NACK',
+      'errorCode': details.effectiveCode,
+      'errorName': details.errorName,
+      'errorDescription': details.errorDescription,
+      'retryable': details.isRetryable,
+      'message': details.text == null && response.errorMessage != null
+          ? response.errorMessage
+          : details.displayMessage,
     }, UcpLogMode.errorOnly);
+    final message = details.text == null && response.errorMessage != null
+        ? response.errorMessage!
+        : details.displayMessage;
     pending.completeError(
       ProtocolException(
-        details.text ?? response.errorMessage ?? 'Device returned NACK',
-        errorCode: details.errorCode ?? response.flags,
+        message,
+        errorCode:
+            details.effectiveCode ??
+            (response.flags == 0 ? null : response.flags),
         protocolErrorType: ProtocolErrorType.nackReceived,
       ),
     );
