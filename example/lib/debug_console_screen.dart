@@ -202,13 +202,32 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
 
   Future<void> _lastReport() async {
     await _runAction('last_report', () async {
-      final report = await _client.lastReport();
+      final report = await _readLastReportWhenReady();
+      if (report == null) {
+        return;
+      }
       _appendLog(
         'last_report N=${report.nitrogen ?? '-'} P=${report.phosphorus ?? '-'} '
         'K=${report.potassium ?? '-'} moisture=${report.moisture ?? '-'} '
         'temp=${report.temperature ?? '-'} EC=${report.ec ?? '-'} pH=${report.ph ?? '-'}',
       );
     });
+  }
+
+  Future<UcpLastReport?> _readLastReportWhenReady() async {
+    if (_client.currentSession?.measurementActive ?? false) {
+      _appendLog('last_report skipped: device is still running the soil test');
+      return null;
+    }
+    try {
+      return await _client.lastReport();
+    } on ProtocolException catch (error) {
+      if (error.errorCode == UcpStatusCodes.deviceBusy) {
+        _appendLog('last_report blocked: DEVICE_BUSY, wait for completion');
+        return null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> _moistOn() async {

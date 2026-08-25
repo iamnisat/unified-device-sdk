@@ -227,7 +227,10 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Future<void> _lastReport() async {
     await _runAction('last_report', () async {
-      final report = await _client.lastReport();
+      final report = await _readLastReportWhenReady();
+      if (report == null) {
+        return;
+      }
       _addLog(
         LogLevel.info,
         'Last Report → N: ${report.nitrogen ?? "-"}, '
@@ -239,6 +242,28 @@ class _DashboardScreenState extends State<DashboardScreen>
         'pH: ${report.ph ?? "-"}',
       );
     });
+  }
+
+  Future<UcpLastReport?> _readLastReportWhenReady() async {
+    if (_client.currentSession?.measurementActive ?? false) {
+      _addLog(
+        LogLevel.info,
+        'Last Report → Device is still running the soil test. Wait for completion before fetching the report.',
+      );
+      return null;
+    }
+    try {
+      return await _client.lastReport();
+    } on ProtocolException catch (error) {
+      if (error.errorCode == UcpStatusCodes.deviceBusy) {
+        _addLog(
+          LogLevel.info,
+          'Last Report → Device busy. Report is not ready until the soil test completes.',
+        );
+        return null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> _moistOn() async {

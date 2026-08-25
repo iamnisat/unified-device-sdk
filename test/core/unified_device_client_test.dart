@@ -376,6 +376,28 @@ void main() {
           flags: 0,
           payload: TlvBuilder()
               .addUint16BE(TlvTypes.statusCode, 0)
+              .addUint8(TlvTypes.sampleSizePercent, 100)
+              .build(),
+        ),
+      );
+      await _drainQueue();
+
+      expect(client.currentSession?.measurementActive, isTrue);
+
+      transport.simulateIncomingData(
+        frameBuilder.build(
+          version: 1,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.defaultProfile,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
+          op: OperationCodes.event,
+          commandClass: CommandClasses.measurement,
+          commandId: MeasurementCommandIds.startTest,
+          sequence: 12,
+          flags: 0,
+          payload: TlvBuilder()
+              .addUint16BE(TlvTypes.statusCode, 0)
               .addUtf8(TlvTypes.messageText, 'SOIL_TEST_ERROR')
               .addUint8(TlvTypes.fwStateU8, 6)
               .build(),

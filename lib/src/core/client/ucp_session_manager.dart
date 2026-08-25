@@ -431,14 +431,13 @@ class UcpSessionManager {
       final status =
           _findInt(decoded, TlvTypes.statusCode) ??
           _findInt(decoded, TlvTypes.statusU8);
-      final samplePercent = _findInt(decoded, TlvTypes.sampleSizePercent);
       final firmwareState = _findInt(decoded, TlvTypes.fwStateU8);
       final hasError = (status != null && status != 0) || firmwareState == 6;
       final complete = status == 4 || firmwareState == 5;
       if (hasError || complete) {
         markMeasurementActive(false);
       } else {
-        markMeasurementActive(samplePercent == null || samplePercent < 100);
+        markMeasurementActive(true);
       }
     }
 

@@ -1,6 +1,8 @@
-# Unified Device SDK Example 📡
+# Unified Device SDK Flutter Integration 📡
 
-A practical Flutter example for integrating `unified_device_sdk` into a mobile app. This SDK provides BLE scanning, connection management, UCP session bootstrap, frame parsing, CRC validation, command execution, packet tracing, and decoded device data streams.
+This example shows how to integrate `unified_device_sdk` into a Flutter app for Porokh/Aunkur BLE hardware. It covers BLE scanning, connection management, production UCP session bootstrap, command execution, soil-test progress, final report fetching, packet tracing, and error handling.
+
+Use this README as the main integration guide when adding the package to another Flutter project.
 
 ## What This Example Shows ✨
 
@@ -43,6 +45,7 @@ For local development from this repository:
 ```yaml
 dependencies:
   unified_device_sdk:
+    # Replace this with your local SDK path.
     path: ../unified_device_sdk
 ```
 
@@ -122,12 +125,26 @@ cd ..
 
 Create one client and keep it alive while the user is scanning, connecting, and sending commands.
 
+For production Porokh/Aunkur hardware, pass a hardware profile with the production bootstrap settings:
+
 ```dart
-final client = UnifiedDeviceClient.generic(
+const hardwareProfile = UnifiedDeviceHardwareProfile(
+  name: 'Porokh Production',
+  clientName: 'PorokhApp',
+  appInstanceId: 'your-app-instance-id',
+  bootstrapStrategy: UcpBootstrapStrategy.rtcSyncOnly,
+);
+
+final UnifiedDeviceClient client = UnifiedDeviceClient.generic(
+  hardwareProfile: hardwareProfile,
   logMode: UcpLogMode.basic,
   defaultTimeout: const Duration(seconds: 5),
 );
 ```
+
+The `hardwareProfile` is important. It controls BLE UUIDs, product/profile IDs, source/destination addresses, client identity, and whether the SDK sends only `open_rtc_sync` during bootstrap.
+
+Use a stable `appInstanceId` for your app installation. Production firmware requires both `client_name` and `app_instance_id` during session bootstrap.
 
 Check Bluetooth status and request permissions:
 
@@ -139,7 +156,7 @@ final bluetoothEnabled = await platform.isBluetoothEnabled();
 final permissionsGranted = await platform.requestBluetoothPermissions();
 ```
 
-Listen for scan results:
+Here `client` is the `UnifiedDeviceClient` instance created above. Listen for scan results before starting BLE scan:
 
 ```dart
 final scanSub = client.discoveredDevices.listen((device) {
@@ -160,6 +177,8 @@ if (client.isSessionActive) {
 }
 ```
 
+Do not send normal commands until `client.isSessionActive == true` or the connection state stream emits `DeviceConnectionState.sessionActive`.
+
 Always clean up when the screen or service is finished:
 
 ```dart
@@ -167,6 +186,19 @@ await scanSub.cancel();
 await client.disconnect();
 await client.dispose();
 ```
+
+## Minimal Integration Flow ✅
+
+1. Add the package to `pubspec.yaml`.
+2. Add Android/iOS Bluetooth permissions.
+3. Create one `UnifiedDeviceClient` with the production hardware profile.
+4. Request Bluetooth permissions.
+5. Start BLE scan and show discovered devices.
+6. Stop scan, then call `connect(device)`.
+7. Wait for `sessionActive`.
+8. Run commands such as `deviceInfo()`, `startTest()`, `moistGetOn()`, or `lastReport()` when the device is idle.
+9. Listen to `events`, `moistureSamples`, and `communicationLogs` to update the UI.
+10. Disconnect and dispose the client when finished.
 
 ## Production Hardware vs Previous DUMMY Hardware 🔁
 
@@ -346,31 +378,67 @@ print(time.text);
 
 ### Soil Test
 
+Production hardware requires these fields when starting a soil test:
+
+| Parameter | UCP TLV | Size | Meaning |
+| --- | --- | --- | --- |
+| `agentId` | `0x02` | Firmware expects 3 bytes | Agent ID |
+| `farmerId` | `0x03` | Firmware expects 3 bytes | Farmer ID |
+| `fieldIndex` | `0x04` | Firmware expects 1 byte | Field index |
+| `fieldTestIndex` | `0x05` | Firmware expects 1 byte | Field test index |
+| `globalLandLocation` | `0x1D` | 4 bytes | Global land location ID |
+| `aez` | `0x1E` | 4 bytes | Agro-ecological zone ID |
+| `soilCategory` | `0x1F` | 4 bytes | Soil category ID |
+
+The SDK sends all required TLVs. The numeric location fields default to `0`, but production apps should pass real values when they are available.
+
 ```dart
 await client.startTest(
-  agentId: 'AGENT-DEMO1',
-  farmerId: 'FARMER-0012',
-  fieldIndex: 'FIELD-A3',
-  fieldTestIndex: 'TEST-0001',
-  globalLandLocation: 0, // Replace with the real land location ID.
-  aez: 0,
-  soilCategory: 0,
+  agentId: 'AID',
+  farmerId: 'FID',
+  fieldIndex: '1',
+  fieldTestIndex: '1',
+  globalLandLocation: 0, // Replace with real value when available.
+  aez: 0,                // Replace with real value when available.
+  soilCategory: 0,       // Replace with real value when available.
 );
 ```
 
-Fetch the final/latest report:
+Listen for UCP soil-test events to update progress:
 
 ```dart
-final report = await client.lastReport();
+final eventSub = client.events.listen((event) {
+  final frame = event.sourceFrame;
+  if (frame == null) {
+    return;
+  }
 
-print('N: ${report.nitrogen}');
-print('P: ${report.phosphorus}');
-print('K: ${report.potassium}');
-print('Moisture: ${report.moisture}');
-print('pH: ${report.ph}');
-print('EC: ${report.ec}');
-print('Temperature: ${report.temperature}');
+  if (frame.commandClass == CommandClasses.measurement &&
+      frame.commandId == MeasurementCommandIds.startTest) {
+    print('Soil test event payload: ${frame.payload}');
+  }
+});
 ```
+
+Cancel `eventSub` when the screen or service is disposed.
+
+Fetch the final/latest report only after the firmware sends a terminal completion event. Do not call `lastReport()` while `client.currentSession?.measurementActive == true`; the device can return `DEVICE_BUSY` even after progress reaches `100%`.
+
+```dart
+if (!(client.currentSession?.measurementActive ?? false)) {
+  final report = await client.lastReport();
+
+  print('N: ${report.nitrogen}');
+  print('P: ${report.phosphorus}');
+  print('K: ${report.potassium}');
+  print('Moisture: ${report.moisture}');
+  print('pH: ${report.ph}');
+  print('EC: ${report.ec}');
+  print('Temperature: ${report.temperature}');
+}
+```
+
+The example app already manages this flow: it keeps the UI in the running state at `100%`, waits for the real completion status, then requests `last_report`.
 
 ### Moisture Stream
 
@@ -553,11 +621,35 @@ try {
 } on TransportException catch (error) {
   print('BLE transport error: $error');
 } on ProtocolException catch (error) {
+  if (error.errorCode == UcpStatusCodes.deviceBusy) {
+    print('Device is busy. Wait for the running workflow to finish.');
+    return;
+  }
+
+  if (error.errorCode == UcpStatusCodes.invalidPayload) {
+    print('Required payload field is missing or invalid.');
+    return;
+  }
+
   print('UCP protocol error: $error');
 } on UnifiedDeviceException catch (error) {
   print('SDK error: $error');
 }
 ```
+
+Common production NACK status codes:
+
+| Code | Hex | Meaning | App action |
+| --- | --- | --- | --- |
+| `UcpStatusCodes.ok` | `0x0000` | Success | Continue |
+| `UcpStatusCodes.invalidPayload` | `0x0005` | Required TLV missing or invalid | Check command payload |
+| `UcpStatusCodes.deviceBusy` | `0x0008` | Device cannot accept this command now | Wait and retry after completion |
+| `UcpStatusCodes.invalidState` | `0x000A` | Command is not valid in current firmware state | Update UI flow/state |
+| `UcpStatusCodes.lowBattery` | `0x000E` | Battery too low | Ask user to charge device |
+| `UcpStatusCodes.sessionNotOpen` | `0x0100` | Command sent before session open | Wait for `sessionActive` |
+| `UcpStatusCodes.clientIdRequired` | `0x0106` | `client_name` or `app_instance_id` missing | Fix `UnifiedDeviceHardwareProfile` |
+
+Use the numeric `status_code`/`errorCode` for application logic. Treat `message_text` as a diagnostic string for logs and support screens.
 
 Common causes:
 
@@ -593,7 +685,15 @@ Use one long-lived `UnifiedDeviceClient` per active device session:
 
 ```dart
 class DeviceService {
+  static const hardwareProfile = UnifiedDeviceHardwareProfile(
+    name: 'Porokh Production',
+    clientName: 'PorokhApp',
+    appInstanceId: 'your-app-instance-id',
+    bootstrapStrategy: UcpBootstrapStrategy.rtcSyncOnly,
+  );
+
   final UnifiedDeviceClient client = UnifiedDeviceClient.generic(
+    hardwareProfile: hardwareProfile,
     logMode: UcpLogMode.basic,
   );
 
@@ -677,6 +777,23 @@ await client.startTest(
   soilCategory: 0,
 );
 ```
+
+### `last_report` returns `DEVICE_BUSY`
+
+This means a measurement is still running. Do not fetch the report yet.
+
+The firmware can report progress as `100%` before the final completion status is emitted, so use the SDK session state or the guided soil-test flow:
+
+```dart
+if (client.currentSession?.measurementActive ?? false) {
+  print('Wait for soil test completion before fetching last_report');
+  return;
+}
+
+final report = await client.lastReport();
+```
+
+In the example app, `last_report` is requested automatically only after the final UCP completion status is received.
 
 ## Feature Checklist 📋
 

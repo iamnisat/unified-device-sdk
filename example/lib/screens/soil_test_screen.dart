@@ -164,8 +164,19 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     );
   }
 
-  Future<void> _fetchLastReport() async {
+  Future<void> _fetchLastReport({bool afterCompletion = false}) async {
     if (_reportFetchInFlight) {
+      return;
+    }
+    if (!afterCompletion &&
+        (_client.currentSession?.measurementActive ?? false)) {
+      setState(() {
+        _stage = SoilTestFlowStage.soilTestRunning;
+        _errorMessage = null;
+        _progressMessage =
+            'Device is still running the soil test. Waiting for completion before fetching the report.';
+      });
+      _addActivity('last_report skipped: DEVICE_BUSY');
       return;
     }
     _reportFetchInFlight = true;
@@ -188,6 +199,25 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       });
       _addActivity('last_report DATA received');
       _showResultDialog();
+    } on ProtocolException catch (error) {
+      if (error.errorCode == UcpStatusCodes.deviceBusy) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _stage = SoilTestFlowStage.soilTestRunning;
+          _errorMessage = null;
+          _progressMessage =
+              'Device is busy running the soil test. The report will be available after the final completion status.';
+          _retryAction = null;
+        });
+        _addActivity('last_report blocked: DEVICE_BUSY');
+        return;
+      }
+      _setError(
+        'Could not fetch the final report: ${_friendlyError(error)}',
+        retryAction: _fetchLastReport,
+      );
     } on Object catch (error) {
       _setError(
         'Could not fetch the final report: ${_friendlyError(error)}',
@@ -257,7 +287,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     });
   }
 
-  void _handleEvent(DeviceEvent event) {
+  Future<void> _handleEvent(DeviceEvent event) async {
     final frame = event.sourceFrame;
     if (frame == null) {
       return;
@@ -311,7 +341,8 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
 
     final complete = status == 4 || firmwareState == 5;
     if (complete) {
-      unawaited(_fetchLastReport());
+      await Future.delayed(Duration(seconds: 2));
+      unawaited(_fetchLastReport(afterCompletion: true));
     }
   }
 
@@ -696,6 +727,14 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
             const Text('Soil Test Demo'),
           ],
         ),
+        actions: [
+          IconButton(
+            onPressed: () {
+              unawaited(_fetchLastReport(afterCompletion: true));
+            },
+            icon: Icon(Icons.read_more),
+          ),
+        ],
       ),
       bottomNavigationBar: _buildBottomActionBar(theme),
       body: ListView(
