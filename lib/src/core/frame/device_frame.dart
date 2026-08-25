@@ -22,6 +22,7 @@ class UcpFrame {
   final List<int> payload;
   final List<Tlv> tlvs;
   final int crc;
+  final List<int>? rawBytes;
   final int minSequence;
   final int maxSequence;
 
@@ -39,6 +40,7 @@ class UcpFrame {
     List<int> payload = const [],
     List<Tlv> tlvs = const [],
     required this.crc,
+    List<int>? rawBytes,
     this.minSequence = ProtocolConstants.initialSequenceNumber,
     this.maxSequence = ProtocolConstants.maxSequenceNumber,
   }) : payload = List<int>.unmodifiable(
@@ -46,7 +48,8 @@ class UcpFrame {
        ),
        tlvs = List<Tlv>.unmodifiable(
          _resolveTlvs(payload: payload, tlvs: tlvs),
-       ) {
+       ),
+       rawBytes = rawBytes == null ? null : List<int>.unmodifiable(rawBytes) {
     _validateUint8(version, 'version');
     _validateUint8(productId, 'productId');
     _validateUint8(profileId, 'profileId');
@@ -92,6 +95,7 @@ class UcpFrame {
     List<int>? payload,
     List<Tlv>? tlvs,
     int? crc,
+    List<int>? rawBytes,
     int? minSequence,
     int? maxSequence,
   }) {
@@ -109,6 +113,7 @@ class UcpFrame {
       payload: payload ?? this.payload,
       tlvs: tlvs ?? this.tlvs,
       crc: crc ?? this.crc,
+      rawBytes: rawBytes ?? this.rawBytes,
       minSequence: minSequence ?? this.minSequence,
       maxSequence: maxSequence ?? this.maxSequence,
     );
@@ -282,6 +287,7 @@ class DeviceFrame extends UcpFrame {
     super.payload,
     super.tlvs,
     required super.crc,
+    super.rawBytes,
     super.minSequence = ProtocolConstants.initialSequenceNumber,
     super.maxSequence = ProtocolConstants.maxSequenceNumber,
   }) : super(
@@ -305,6 +311,7 @@ class DeviceFrame extends UcpFrame {
       payload: frame.payload,
       tlvs: frame.tlvs,
       crc: frame.crc,
+      rawBytes: frame.rawBytes,
       minSequence: frame.minSequence,
       maxSequence: frame.maxSequence,
     );

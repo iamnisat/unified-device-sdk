@@ -1,4 +1,3 @@
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
@@ -174,6 +173,37 @@ void main() {
       expect(events, hasLength(1));
       expect(events.single.commandId, SessionCommandIds.heartbeat);
       expect(events.single.eventCode, 0xAB);
+    });
+
+    test('RX packet trace uses original parsed frame bytes', () async {
+      final traceFuture = manager.packetTraces.firstWhere(
+        (trace) => trace.direction == UcpPacketDirection.rx,
+      );
+      final bytes = frameBuilder.build(
+        version: 1,
+        productId: ProductIds.aunkurUcp1,
+        profileId: ProfileIds.defaultProfile,
+        sourceAddress: UcpAddresses.device,
+        destinationAddress: UcpAddresses.software,
+        op: OperationCodes.nack,
+        commandClass: CommandClasses.measurement,
+        commandId: MeasurementCommandIds.getLastReport,
+        sequence: 13,
+        flags: 0,
+        payload: TlvBuilder()
+            .addUint16BE(TlvTypes.statusCode, UcpStatusCodes.deviceBusy)
+            .addUtf8(
+              TlvTypes.messageText,
+              'TEST_RUNNING_ONLY_MATCHING_STOP_ALLOWED',
+            )
+            .build(),
+      );
+
+      transport.simulateIncomingData(bytes);
+
+      final trace = await traceFuture;
+      expect(trace.bytes, bytes);
+      expect(trace.frame?.rawBytes, bytes);
     });
   });
 }

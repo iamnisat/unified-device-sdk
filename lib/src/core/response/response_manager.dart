@@ -252,11 +252,7 @@ class UcpResponseManager {
     if (!_frameController.isClosed) {
       _frameController.add(frame);
     }
-    _emitTrace(
-      UcpPacketDirection.rx,
-      _frameBuilder.buildFromFrame(frame),
-      frame: frame,
-    );
+    _emitTrace(UcpPacketDirection.rx, _rawBytesForFrame(frame), frame: frame);
 
     if (frame.isEvent) {
       final event = DeviceEvent.fromFrame(
@@ -654,11 +650,13 @@ class UcpResponseManager {
       'crc': _hex16(frame.crc),
       'tlvCount': resolvedTlvs.length,
       if (includeBytesHex)
-        'bytesHex': _bytesToHex(
-          fallbackBytes ?? _frameBuilder.buildFromFrame(frame),
-        ),
+        'bytesHex': _bytesToHex(fallbackBytes ?? _rawBytesForFrame(frame)),
       if (includeTlvs) 'tlvs': _serializeTlvs(resolvedTlvs),
     };
+  }
+
+  List<int> _rawBytesForFrame(DeviceFrame frame) {
+    return frame.rawBytes ?? _frameBuilder.buildFromFrame(frame);
   }
 
   List<Map<String, dynamic>> _serializeTlvs(List<DecodedTlv> tlvs) {

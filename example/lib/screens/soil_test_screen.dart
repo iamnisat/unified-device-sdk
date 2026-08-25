@@ -275,19 +275,14 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
         _findString(decoded, TlvTypes.messageText) ??
         _findString(decoded, TlvTypes.textUtf8);
     final firmwareState = _findInt(decoded, TlvTypes.fwStateU8);
-    final progressPercent =
-        _findInt(decoded, TlvTypes.sampleSizePercent) ??
-        _progressPercentFromText(text);
+    final progressPercent = _findInt(decoded, TlvTypes.sampleSizePercent);
     final message = text?.trim();
     final progress = _soilTestProgressMessage(
       progressPercent: progressPercent,
       message: message,
       status: status,
     );
-    final hasError =
-        (status != null && status != 0) ||
-        _isSoilTestErrorMessage(message) ||
-        firmwareState == 6;
+    final hasError = (status != null && status != 0) || firmwareState == 6;
 
     if (!mounted) {
       return;
@@ -298,10 +293,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
           _soilTestProgressPercent = progressPercent.clamp(0, 100).toInt();
         }
       });
-      _setError(
-        'Device reported soil test error${message == null || message.isEmpty ? '' : ': $message'}.',
-        retryAction: _startSoilTest,
-      );
+      _setError(_soilTestErrorMessage(message), retryAction: _startSoilTest);
       return;
     }
 
@@ -317,10 +309,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     });
     _addActivity('EVENT: $progress');
 
-    final complete =
-        status == 4 ||
-        firmwareState == 5 ||
-        _isSoilTestCompleteMessage(message);
+    final complete = status == 4 || firmwareState == 5;
     if (complete) {
       unawaited(_fetchLastReport());
     }
@@ -363,17 +352,6 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     return null;
   }
 
-  int? _progressPercentFromText(String? text) {
-    if (text == null) {
-      return null;
-    }
-    final match = RegExp(r'(\d{1,3})%').firstMatch(text);
-    if (match == null) {
-      return null;
-    }
-    return int.tryParse(match.group(1)!);
-  }
-
   String _soilTestProgressMessage({
     required int? progressPercent,
     required String? message,
@@ -395,21 +373,11 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     return 'Soil test event received.';
   }
 
-  bool _isSoilTestErrorMessage(String? message) {
-    final normalized = message?.toLowerCase();
-    return normalized != null && normalized.contains('error');
-  }
-
-  bool _isSoilTestCompleteMessage(String? message) {
-    final normalized = message?.toLowerCase();
-    if (normalized == null) {
-      return false;
+  String _soilTestErrorMessage(String? diagnosticText) {
+    if (diagnosticText == null || diagnosticText.isEmpty) {
+      return 'Device reported soil test error.';
     }
-    return normalized.contains('report ready') ||
-        normalized.contains('soil_test_done') ||
-        normalized.contains('soil_test_completed') ||
-        normalized.contains('completed') ||
-        normalized.contains('complete');
+    return 'Device reported soil test error: $diagnosticText.';
   }
 
   void _setError(String message, {Future<void> Function()? retryAction}) {

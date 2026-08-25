@@ -72,6 +72,29 @@ void main() {
       expect(frame.tlvs, isEmpty);
     });
 
+    test('preserves original raw frame bytes', () {
+      final bytes = builder.build(
+        version: 1,
+        productId: ProductIds.aunkurUcp1,
+        op: OperationCodes.nack,
+        commandClass: CommandClasses.measurement,
+        commandId: MeasurementCommandIds.getLastReport,
+        sequence: 13,
+        flags: 0,
+        payload: TlvBuilder()
+            .addUint16BE(TlvTypes.statusCode, UcpStatusCodes.deviceBusy)
+            .addUtf8(
+              TlvTypes.messageText,
+              'TEST_RUNNING_ONLY_MATCHING_STOP_ALLOWED',
+            )
+            .build(),
+      );
+
+      final frame = parser.parse(bytes);
+
+      expect(frame.rawBytes, bytes);
+    });
+
     test('decodes one-byte firmware state on shared 0x54 TLV', () {
       final frame = parser.parse(
         builder.build(
@@ -82,7 +105,9 @@ void main() {
           commandId: MeasurementCommandIds.startTest,
           sequence: 8,
           flags: 0,
-          tlvs: [Tlv(type: TlvTypes.fwStateU8, value: const [6])],
+          tlvs: [
+            Tlv(type: TlvTypes.fwStateU8, value: const [6]),
+          ],
         ),
       );
 

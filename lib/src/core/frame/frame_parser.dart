@@ -98,6 +98,7 @@ class UcpFrameParser {
         payload: payload,
         tlvs: tlvs,
         crc: declaredCrc,
+        rawBytes: bytes,
       );
     } on ArgumentError catch (e) {
       throw ProtocolException(

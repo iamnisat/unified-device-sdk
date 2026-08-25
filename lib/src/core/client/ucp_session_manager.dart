@@ -17,6 +17,7 @@ import '../../protocol/constants/command_ids.dart';
 import '../../protocol/constants/operation_codes.dart';
 import '../../protocol/constants/protocol_constants.dart';
 import '../../protocol/constants/tlv_types.dart';
+import '../../protocol/constants/ucp_status_codes.dart';
 import '../../protocol/models/decoded_tlv.dart';
 import '../../protocol/payloads/tlv_builder.dart';
 
@@ -430,22 +431,10 @@ class UcpSessionManager {
       final status =
           _findInt(decoded, TlvTypes.statusCode) ??
           _findInt(decoded, TlvTypes.statusU8);
-      final text =
-          _findString(decoded, TlvTypes.messageText) ??
-          _findString(decoded, TlvTypes.textUtf8);
       final samplePercent = _findInt(decoded, TlvTypes.sampleSizePercent);
       final firmwareState = _findInt(decoded, TlvTypes.fwStateU8);
-      final normalized = text?.toLowerCase() ?? '';
-      final hasError =
-          (status != null && status != 0) ||
-          normalized.contains('error') ||
-          firmwareState == 6;
-      final complete =
-          status == 4 ||
-          firmwareState == 5 ||
-          normalized.contains('report ready for last_report') ||
-          normalized.contains('complete') ||
-          normalized.contains('completed');
+      final hasError = (status != null && status != 0) || firmwareState == 6;
+      final complete = status == 4 || firmwareState == 5;
       if (hasError || complete) {
         markMeasurementActive(false);
       } else {
@@ -468,24 +457,11 @@ class UcpSessionManager {
     return null;
   }
 
-  String? _findString(List<DecodedTlv> tlvs, int type) {
-    for (final tlv in tlvs) {
-      if (tlv.type == type && tlv.value is String) {
-        return tlv.value as String;
-      }
-    }
-    return null;
-  }
-
   bool _isBootstrapCompatibilityNack(ProtocolException error) {
     if (error.protocolErrorType != ProtocolErrorType.nackReceived) {
       return false;
     }
-    final message = error.message.toLowerCase();
-    return message.contains('unsupported ucp') ||
-        (message.contains('version') &&
-            message.contains('product') &&
-            message.contains('profile'));
+    return error.errorCode == UcpStatusCodes.unsupportedVersion;
   }
 
   List<int> _clientNamePayload({required bool includeClientName}) {
