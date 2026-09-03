@@ -16,7 +16,10 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -56,6 +59,9 @@ class BleManager(
         private const val TAG = "UnifiedDeviceSdkBle"
         private const val CONNECT_RETRY_DELAY_MS = 500L
         private const val CONNECT_CLEANUP_DELAY_MS = 300L
+        private const val CONNECT_TIMEOUT_MS = 15_000L
+        private const val DISCONNECT_TIMEOUT_MS = 5_000L
+        private const val WRITE_TIMEOUT_MS = 5_000L
         private val DEFAULT_SERVICE_UUID: UUID =
             UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
         private val DEFAULT_NOTIFY_CHARACTERISTIC_UUID: UUID =
@@ -87,11 +93,15 @@ class BleManager(
     private var pendingConnectResult: MethodChannel.Result? = null
     private var pendingDisconnectResult: MethodChannel.Result? = null
     private var pendingWriteResult: MethodChannel.Result? = null
+    private var pendingConnectTimeout: Runnable? = null
+    private var pendingDisconnectTimeout: Runnable? = null
+    private var pendingWriteTimeout: Runnable? = null
     private var lastConnectionIssue: ConnectionIssue? = null
     private var isScanning = false
     private var connectionReady = false
     private var connectionRetryCount = 0
     private val maxConnectionRetries = 2
+    private var adapterReceiverRegistered = false
 
     init {
         scanEventChannel.setStreamHandler(
@@ -129,6 +139,8 @@ class BleManager(
                 }
             }
         )
+
+        registerAdapterStateReceiver()
     }
 
     fun setActivity(activity: Activity?) {
@@ -233,6 +245,7 @@ class BleManager(
         cleanupGatt("before_connect:$deviceId")
 
         pendingConnectResult = result
+        scheduleConnectTimeout(result, device.address)
         connectionRetryCount = 0
         emitConnectionState("connecting", device.address)
         mainHandler.postDelayed(
@@ -332,6 +345,7 @@ class BleManager(
         }
 
         pendingDisconnectResult = result
+        scheduleDisconnectTimeout(result, connectedDeviceId)
         emitConnectionState("disconnecting", connectedDeviceId)
         try {
             gatt.disconnect()
@@ -487,6 +501,7 @@ class BleManager(
                 } else {
                     Log.d(TAG, "WRITE_TYPE_DEFAULT: waiting for onCharacteristicWrite callback")
                     pendingWriteResult = result
+                    scheduleWriteTimeout(result, connectedDeviceId)
                     Log.d(TAG, "pendingWriteResult set")
                     Log.d(TAG, "=======================================")
                 }
@@ -524,6 +539,7 @@ class BleManager(
                 } else {
                     Log.d(TAG, "WRITE_TYPE_DEFAULT: waiting for onCharacteristicWrite callback")
                     pendingWriteResult = result
+                    scheduleWriteTimeout(result, connectedDeviceId)
                     Log.d(TAG, "pendingWriteResult set")
                     Log.d(TAG, "=======================================")
                 }
@@ -558,6 +574,7 @@ class BleManager(
 
     fun dispose() {
         isScanning = false
+        unregisterAdapterStateReceiver()
         bleScanner?.let { scanner ->
             try {
                 scanner.stopScan(scanCallback)
@@ -712,6 +729,8 @@ class BleManager(
     }
 
     private fun handleDisconnectEvent(unexpected: Boolean, wasReady: Boolean = connectionReady) {
+        // Cancel the disconnect watchdog — we got a real callback, no need to force-fire.
+        cancelDisconnectTimeout()
         val deviceId = connectedDeviceId
         val connectWasPending = pendingConnectResult != null
         val disconnectWasPending = pendingDisconnectResult != null
@@ -774,6 +793,10 @@ class BleManager(
         clearPendingDisconnect: Boolean = true
     ) {
         Log.d(TAG, "cleanupGatt reason=$reason")
+        // Always cancel any inflight watchdog timers so they cannot fire after cleanup.
+        cancelConnectTimeout()
+        cancelDisconnectTimeout()
+        cancelWriteTimeout()
         cleanupConnectionState()
         if (failPendingWrite) {
             pendingWriteResult?.error(
@@ -836,12 +859,187 @@ class BleManager(
     }
 
     private fun completePendingResultsOnDispose() {
+        cancelConnectTimeout()
+        cancelDisconnectTimeout()
+        cancelWriteTimeout()
         pendingConnectResult?.error("connect_failed", "BLE manager disposed", null)
         pendingConnectResult = null
         pendingDisconnectResult?.success(null)
         pendingDisconnectResult = null
         pendingWriteResult?.error("write_failed", "BLE manager disposed", null)
         pendingWriteResult = null
+    }
+
+    // -------------------------------------------------------------------------
+    // Timeout helpers — Fix 1, Fix 3
+    // -------------------------------------------------------------------------
+
+    /** Arms a [CONNECT_TIMEOUT_MS]-duration watchdog for the connect operation. */
+    private fun scheduleConnectTimeout(result: MethodChannel.Result, deviceId: String?) {
+        cancelConnectTimeout()
+        val runnable = Runnable {
+            if (pendingConnectResult != result) return@Runnable
+            Log.w(TAG, "Connect timeout for device=$deviceId after ${CONNECT_TIMEOUT_MS}ms")
+            handleConnectionFailure(
+                "connect_timeout",
+                "BLE connection timed out after ${CONNECT_TIMEOUT_MS}ms",
+                mapOf("deviceId" to deviceId)
+            )
+            cleanupGatt(
+                "connect_timeout",
+                failPendingConnect = false,
+                failPendingWrite = false,
+                completePendingDisconnect = false,
+                clearPendingConnect = false,
+                clearPendingWrite = false,
+                clearPendingDisconnect = false
+            )
+            emitConnectionState("disconnected", deviceId, message = lastConnectionIssue?.message)
+            pendingConnectResult?.error(
+                "connect_timeout",
+                "BLE connection timed out after ${CONNECT_TIMEOUT_MS}ms",
+                mapOf("deviceId" to deviceId)
+            )
+            pendingConnectResult = null
+            lastConnectionIssue = null
+        }
+        pendingConnectTimeout = runnable
+        mainHandler.postDelayed(runnable, CONNECT_TIMEOUT_MS)
+    }
+
+    private fun cancelConnectTimeout() {
+        pendingConnectTimeout?.let { mainHandler.removeCallbacks(it) }
+        pendingConnectTimeout = null
+    }
+
+    /** Arms a [DISCONNECT_TIMEOUT_MS]-duration watchdog for the disconnect operation.
+     *
+     * If Android never delivers `STATE_DISCONNECTED` after `gatt.disconnect()`, the watchdog
+     * forces cleanup and emits `disconnected` so the SDK is never stuck in `disconnecting`.
+     */
+    private fun scheduleDisconnectTimeout(result: MethodChannel.Result?, deviceId: String?) {
+        cancelDisconnectTimeout()
+        val runnable = Runnable {
+            Log.w(TAG, "Disconnect timeout for device=$deviceId after ${DISCONNECT_TIMEOUT_MS}ms — forcing cleanup")
+            val devId = connectedDeviceId ?: deviceId
+            cleanupGatt(
+                "disconnect_timeout",
+                failPendingConnect = false,
+                failPendingWrite = true,
+                completePendingDisconnect = false,
+                clearPendingConnect = false,
+                clearPendingWrite = true,
+                clearPendingDisconnect = false
+            )
+            emitConnectionState("disconnected", devId)
+            pendingDisconnectResult?.success(null)
+            pendingDisconnectResult = null
+        }
+        pendingDisconnectTimeout = runnable
+        mainHandler.postDelayed(runnable, DISCONNECT_TIMEOUT_MS)
+    }
+
+    private fun cancelDisconnectTimeout() {
+        pendingDisconnectTimeout?.let { mainHandler.removeCallbacks(it) }
+        pendingDisconnectTimeout = null
+    }
+
+    /** Arms a [WRITE_TIMEOUT_MS]-duration watchdog for the write operation.
+     *
+     * If `onCharacteristicWrite` never fires, the watchdog treats the connection as lost.
+     */
+    private fun scheduleWriteTimeout(result: MethodChannel.Result, deviceId: String?) {
+        cancelWriteTimeout()
+        val runnable = Runnable {
+            if (pendingWriteResult != result) return@Runnable
+            Log.w(TAG, "Write timeout for device=$deviceId after ${WRITE_TIMEOUT_MS}ms — treating as connection lost")
+            val savedDeviceId = connectedDeviceId ?: deviceId
+            pendingWriteResult?.error(
+                "write_timeout",
+                "BLE write timed out after ${WRITE_TIMEOUT_MS}ms",
+                mapOf("deviceId" to savedDeviceId)
+            )
+            pendingWriteResult = null
+            handleConnectionFailure(
+                "write_timeout",
+                "BLE write timed out — connection presumed lost",
+                mapOf("deviceId" to savedDeviceId)
+            )
+            cleanupGatt(
+                "write_timeout",
+                failPendingConnect = false,
+                failPendingWrite = false,
+                completePendingDisconnect = false
+            )
+            emitConnectionState("connectionLost", savedDeviceId, message = lastConnectionIssue?.message)
+            lastConnectionIssue = null
+        }
+        pendingWriteTimeout = runnable
+        mainHandler.postDelayed(runnable, WRITE_TIMEOUT_MS)
+    }
+
+    private fun cancelWriteTimeout() {
+        pendingWriteTimeout?.let { mainHandler.removeCallbacks(it) }
+        pendingWriteTimeout = null
+    }
+
+    // -------------------------------------------------------------------------
+    // Bluetooth adapter state receiver — Fix 4, Fix 5
+    // -------------------------------------------------------------------------
+
+    /**
+     * Reacts to `BluetoothAdapter.STATE_TURNING_OFF` / `STATE_OFF`.
+     *
+     * When Bluetooth is turned off the system kills all GATT connections without delivering
+     * normal `onConnectionStateChange` callbacks. We must proactively:
+     *  1. Stop any running scan.
+     *  2. Cancel all inflight watchdog timers.
+     *  3. Clean up the GATT object so the next `connect()` creates a fresh one (Fix 5).
+     *  4. Emit `disconnected` so the Dart layer knows the link is gone.
+     */
+    private val adapterStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val state = intent.getIntExtra(
+                BluetoothAdapter.EXTRA_STATE,
+                BluetoothAdapter.ERROR
+            )
+            Log.d(TAG, "Bluetooth adapter state changed: $state")
+            if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                Log.w(TAG, "Bluetooth turned off — forcing BLE cleanup")
+                stopScanIfRunning()
+                val devId = connectedDeviceId
+                if (devId != null || bluetoothGatt != null) {
+                    // Fail any pending operations and destroy the GATT.
+                    cleanupGatt(
+                        "bluetooth_off",
+                        failPendingConnect = true,
+                        failPendingWrite = true,
+                        completePendingDisconnect = true
+                    )
+                    emitConnectionState("disconnected", devId)
+                }
+            }
+        }
+    }
+
+    private fun registerAdapterStateReceiver() {
+        if (adapterReceiverRegistered) return
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        context.registerReceiver(adapterStateReceiver, filter)
+        adapterReceiverRegistered = true
+        Log.d(TAG, "Bluetooth adapter state receiver registered")
+    }
+
+    private fun unregisterAdapterStateReceiver() {
+        if (!adapterReceiverRegistered) return
+        try {
+            context.unregisterReceiver(adapterStateReceiver)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Adapter state receiver was not registered", e)
+        }
+        adapterReceiverRegistered = false
+        Log.d(TAG, "Bluetooth adapter state receiver unregistered")
     }
 
     @SuppressLint("MissingPermission")
@@ -1213,6 +1411,8 @@ class BleManager(
                 256
             }
             connectionReady = true
+            // Connection is fully established — disarm the connect watchdog.
+            cancelConnectTimeout()
             Log.d(TAG, "BLE connection ready device=$connectedDeviceId mtu=$effectiveMtu")
             emitConnectionState("mtuReady", connectedDeviceId, details = mapOf("mtu" to effectiveMtu))
             pendingConnectResult?.success(null)
@@ -1249,13 +1449,72 @@ class BleManager(
                 Log.w(TAG, "Ignoring onCharacteristicWrite from stale GATT=${gatt.device?.address}")
                 return
             }
+            // Always cancel the write watchdog — the callback arrived, so it must not fire.
+            cancelWriteTimeout()
             val result = pendingWriteResult ?: return
             pendingWriteResult = null
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 result.success(null)
+                return
+            }
+
+            Log.e(TAG, "BLE write failed status=$status (${describeGattStatus(status)})")
+
+            // status=4  (GATT_INSUFFICIENT_AUTHENTICATION) and
+            // status=201 (vendor "link-level disconnect" used by some Android BLE stacks)
+            // indicate the underlying link is gone. Treat these as a lost connection rather
+            // than a simple write error — clear connectionReady, destroy the GATT, and let
+            // the Dart layer know via connectionLost so it can schedule a reconnect.
+            val isFatalLinkError = status == BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION || status == 201
+            if (isFatalLinkError) {
+                Log.w(
+                    TAG,
+                    "Write failed with fatal link-loss status=$status — treating as connectionLost"
+                )
+                result.error(
+                    "connection_lost",
+                    "BLE write failed with fatal status=$status (${describeGattStatus(status)}) — connection lost",
+                    mapOf(
+                        "deviceId" to connectedDeviceId,
+                        "status" to status,
+                        "statusName" to describeGattStatus(status)
+                    )
+                )
+                val savedDeviceId = connectedDeviceId
+                handleConnectionFailure(
+                    "write_connection_lost",
+                    "BLE write status=$status indicates link loss",
+                    mapOf(
+                        "deviceId" to savedDeviceId,
+                        "status" to status,
+                        "statusName" to describeGattStatus(status)
+                    )
+                )
+                cleanupGatt(
+                    "write_fatal_status:$status",
+                    failPendingConnect = false,
+                    failPendingWrite = false,      // already resolved above
+                    completePendingDisconnect = false
+                )
+                emitConnectionState(
+                    "connectionLost",
+                    savedDeviceId,
+                    message = lastConnectionIssue?.message,
+                    details = lastConnectionIssue?.asEventDetails() ?: emptyMap()
+                )
+                lastConnectionIssue = null
             } else {
-                Log.e(TAG, "BLE write failed status=$status (${describeGattStatus(status)})")
-                result.error("gatt_error", "BLE write failed (status=$status)", null)
+                // Non-fatal write error — report the failure but keep the connection alive.
+                result.error(
+                    "gatt_error",
+                    "BLE write failed (status=$status ${describeGattStatus(status)})",
+                    mapOf(
+                        "deviceId" to connectedDeviceId,
+                        "status" to status,
+                        "statusName" to describeGattStatus(status)
+                    )
+                )
             }
         }
     }
