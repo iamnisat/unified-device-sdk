@@ -1,6 +1,6 @@
 name: unified_device_sdk
 description: "A cross-platform Flutter plugin for BLE device communication with a custom frame-based protocol and CRC validation."
-version: 0.0.1
+version: 0.0.2
 homepage:
 
 environment:
